@@ -24,6 +24,7 @@ class Dialects(str, Enum):
     SNOWFLAKE = "snowflake"
     SPARK = "spark"
     SQLITE = "sqlite"
+    SQLSERVER = "sqlserver"
     STARROCKS = "starrocks"
     TABLEAU = "tableau"
     TRINO = "trino"
@@ -67,7 +68,7 @@ class _Dialect(type):
             klass.generator_class.TRANSFORMS[
                 exp.HexString
             ] = lambda self, e: f"{hs_start}{int(self.sql(e, 'this')):X}{hs_end}"
-
+        print(klass)
         return klass
 
 
