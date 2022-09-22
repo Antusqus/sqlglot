@@ -1,4 +1,4 @@
-from sqlglot import parse_one
+from sqlglot import diff, parse_one
 from sqlglot import exp
 import sqlglot
 from tests.dialects.test_mysql import TestMySQL
@@ -38,8 +38,11 @@ SELECT pub_id, GROUP_CONCAT(cate_id, SEPARATOR(', ') )
 FROM book_mast
 GROUP BY pub_id;        
 """
-# print(repr(parse_one(mySQL_statement, "mysql")))
-print(sqlglot.transpile(mySQL_statement, read="mysql", write="sqlserver"))
+# print(repr(parse_one(mySQL_statement, "mysql" )))
+transpiled_statement = sqlglot.transpile(mySQL_statement, read="mysql", write="sqlserver")
+print(transpiled_statement)
+parsed_statement = parse_one(transpiled_statement[0], "sqlserver")
+print(parsed_statement)
 # newtest = TestMySQL("test_introducers")
 
 # print(newtest())

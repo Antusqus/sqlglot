@@ -2347,8 +2347,8 @@ class Split(Func):
 class Substring(Func):
     arg_types = {"this": True, "start": False, "length": False}
 
-class GroupConcat(Func):
-    arg_types = {"this": True, "separator": False}
+class StrAgg(Func):
+    arg_types = {"this" : True, "separator": False}
 
 class StrPosition(Func):
     arg_types = {"this": True, "substr": True, "position": False}

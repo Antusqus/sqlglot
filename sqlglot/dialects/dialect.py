@@ -68,7 +68,6 @@ class _Dialect(type):
             klass.generator_class.TRANSFORMS[
                 exp.HexString
             ] = lambda self, e: f"{hs_start}{int(self.sql(e, 'this')):X}{hs_end}"
-        print(klass)
         return klass
 
 

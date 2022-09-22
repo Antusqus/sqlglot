@@ -11,6 +11,7 @@ class SQLServer(Dialect):
 
         KEYWORDS = {
             **Tokenizer.KEYWORDS,
+            # "SEPARATOR": TokenType.SEPARATOR,
             "INT64": TokenType.BIGINT,
             "FLOAT64": TokenType.DOUBLE,
         }
@@ -19,8 +20,8 @@ class SQLServer(Dialect):
 
         FUNCTION_PARSERS = {
             **Parser.FUNCTION_PARSERS,
-            "STRAGG": lambda self: self.expression(
-                exp.GroupConcat,
+            "STRING_AGG": lambda self: self.expression(
+                exp.StrAgg,
                 this=self._parse_lambda(),
                 separator=self._match(TokenType.SEPARATOR) and self._parse_field(),
             ),
@@ -29,6 +30,7 @@ class SQLServer(Dialect):
     class Generator(Generator):
         TRANSFORMS = {
             **Generator.TRANSFORMS,
+            exp.StrAgg: lambda self, e: f"""STRING_AGG({self.sql(e, "this")}, {self.sql(e, "separator") or "','"})""",
             exp.GroupConcat: lambda self, e: f"""STRING_AGG({self.sql(e, "this")}, {self.sql(e, "separator") or "','"})""",
             }
 
