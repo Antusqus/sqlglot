@@ -34,12 +34,19 @@ CREATE VIEW `nicer_but_slower_film_list` AS
 """
 test_statement: str = \
 """
-SELECT pub_id, GROUP_CONCAT(cate_id, SEPARATOR(', ') )
-FROM book_mast
-GROUP BY pub_id;        
+GROUP_CONCAT(CONCAT(CONCAT(UPPER(SUBSTR(`actor`.`first_name`, 1, 1)),
+                            LOWER(SUBSTR(`actor`.`first_name`,
+                                        2,
+                                        LENGTH(`actor`.`first_name`))),
+                            _utf8mb4 ' ',
+                            CONCAT(UPPER(SUBSTR(`actor`.`last_name`, 1, 1)),
+                                    LOWER(SUBSTR(`actor`.`last_name`,
+                                                2,
+                                                LENGTH(`actor`.`last_name`))))))
+            SEPARATOR ', ') AS `actors`      
 """
 # print(repr(parse_one(mySQL_statement, "mysql" )))
-transpiled_statement = sqlglot.transpile(mySQL_statement, read="mysql", write="sqlserver")
+transpiled_statement = sqlglot.transpile(test_statement, read="mysql", write="sqlserver")
 print(transpiled_statement)
 parsed_statement = parse_one(transpiled_statement[0], "sqlserver")
 print(parsed_statement)

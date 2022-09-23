@@ -1,17 +1,17 @@
 from sqlglot import exp
-from sqlglot.dialects.dialect import Dialect
+from sqlglot.dialects.dialect import Dialect, rename_func
 from sqlglot.generator import Generator
 from sqlglot.parser import Parser
 from sqlglot.tokens import Tokenizer, TokenType
 
 class SQLServer(Dialect):
     class Tokenizer(Tokenizer):
-        QUOTES = ["'", '"']
-        IDENTIFIERS = ["`"]
+        QUOTES = ['"']
+        # IDENTIFIERS = ["`"]
+        ESCAPE = "'"
 
         KEYWORDS = {
             **Tokenizer.KEYWORDS,
-            # "SEPARATOR": TokenType.SEPARATOR,
             "INT64": TokenType.BIGINT,
             "FLOAT64": TokenType.DOUBLE,
         }
@@ -23,15 +23,16 @@ class SQLServer(Dialect):
             "STRING_AGG": lambda self: self.expression(
                 exp.StrAgg,
                 this=self._parse_lambda(),
-                separator=self._match(TokenType.SEPARATOR) and self._parse_field(),
+                separator=self._match(TokenType.COMMA) and self._parse_field(),
             ),
         }
 
     class Generator(Generator):
         TRANSFORMS = {
             **Generator.TRANSFORMS,
-            exp.StrAgg: lambda self, e: f"""STRING_AGG({self.sql(e, "this")}, {self.sql(e, "separator") or "','"})""",
-            exp.GroupConcat: lambda self, e: f"""STRING_AGG({self.sql(e, "this")}, {self.sql(e, "separator") or "','"})""",
+            exp.StrAgg: lambda self, e: f"""STRINGAGG({self.sql(e, "this")}, {self.sql(e, "separator") or "','"})""",
+            exp.GroupConcat: rename_func("STRING_AGG"),
+            exp.Length: lambda self, e: f"""LEN({self.sql(e, "this")})"""
             }
 
         TYPE_MAPPING = {
