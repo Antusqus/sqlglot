@@ -47,9 +47,9 @@ GROUP_CONCAT(CONCAT(CONCAT(UPPER(SUBSTR(`actor`.`first_name`, 1, 1)),
 """
 # print(repr(parse_one(mySQL_statement, "mysql" )))
 transpiled_statement = sqlglot.transpile(mySQL_statement, read="mysql", write="sqlserver")
-# print(transpiled_statement)
-parsed_statement = parse_one(transpiled_statement[0], "sqlserver")
-print(parsed_statement)
+print(transpiled_statement)
+parsed_statement = repr(parse_one(transpiled_statement[0], "sqlserver"))
+# print(parsed_statement)
 # newtest = TestMySQL("test_introducers")
 
 # print(newtest())
