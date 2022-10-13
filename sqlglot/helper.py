@@ -1,5 +1,7 @@
+import inspect
 import logging
 import re
+import sys
 from contextlib import contextmanager
 from enum import Enum
 
@@ -27,6 +29,26 @@ def ensure_list(value):
 
 def csv(*args, sep=", "):
     return sep.join(arg for arg in args if arg)
+
+
+def subclasses(module_name, classes, exclude=()):
+    """
+    Returns a list of all subclasses for a specified class set, posibly excluding some of them.
+
+    Args:
+        module_name (str): The name of the module to search for subclasses in.
+        classes (type|tuple[type]): Class(es) we want to find the subclasses of.
+        exclude (type|tuple[type]): Class(es) we want to exclude from the returned list.
+    Returns:
+        A list of all the target subclasses.
+    """
+    return [
+        obj
+        for _, obj in inspect.getmembers(
+            sys.modules[module_name],
+            lambda obj: inspect.isclass(obj) and issubclass(obj, classes) and obj not in exclude,
+        )
+    ]
 
 
 def apply_index_offset(expressions, offset):
@@ -100,7 +122,7 @@ def csv_reader(table):
     Returns a csv reader given the expression READ_CSV(name, ['delimiter', '|', ...])
 
     Args:
-        expression (Expression): An anonymous function READ_CSV
+        table (exp.Table): A table expression with an anonymous function READ_CSV in it
 
     Returns:
         A python csv reader.
@@ -121,3 +143,22 @@ def csv_reader(table):
         yield csv_.reader(file, delimiter=delimiter)
     finally:
         file.close()
+
+
+def find_new_name(taken, base):
+    """
+    Searches for a new name.
+
+    Args:
+        taken (Sequence[str]): set of taken names
+        base (str): base name to alter
+    """
+    if base not in taken:
+        return base
+
+    i = 2
+    new = f"{base}_{i}"
+    while new in taken:
+        i += 1
+        new = f"{base}_{i}"
+    return new

@@ -41,6 +41,7 @@ class TokenType(AutoName):
     LR_ARROW = auto()
     ANNOTATION = auto()
     DOLLAR = auto()
+    PARAMETER = auto()
 
     SPACE = auto()
     BREAK = auto()
@@ -75,6 +76,7 @@ class TokenType(AutoName):
     JSON = auto()
     TIMESTAMP = auto()
     TIMESTAMPTZ = auto()
+    TIMESTAMPLTZ = auto()
     DATETIME = auto()
     DATE = auto()
     UUID = auto()
@@ -83,10 +85,22 @@ class TokenType(AutoName):
     GEOMETRY = auto()
     HLLSKETCH = auto()
     SUPER = auto()
+    SERIAL = auto()
+    SMALLSERIAL = auto()
+    BIGSERIAL = auto()
+    XML = auto()
+    UNIQUEIDENTIFIER = auto()
+    MONEY = auto()
+    SMALLMONEY = auto()
+    ROWVERSION = auto()
+    IMAGE = auto()
+    VARIANT = auto()
+    OBJECT = auto()
 
     # keywords
     ADD_FILE = auto()
     ALIAS = auto()
+    ALWAYS = auto()
     ALL = auto()
     ALTER = auto()
     ANALYZE = auto()
@@ -99,6 +113,7 @@ class TokenType(AutoName):
     BETWEEN = auto()
     BOTH = auto()
     BUCKET = auto()
+    BY_DEFAULT = auto()
     CACHE = auto()
     CALL = auto()
     CASE = auto()
@@ -143,10 +158,12 @@ class TokenType(AutoName):
     FULL = auto()
     FUNCTION = auto()
     FROM = auto()
+    GENERATED = auto()
     GROUP_BY = auto()
     GROUPING_SETS = auto()
     HAVING = auto()
     HINT = auto()
+    IDENTITY = auto()
     IF = auto()
     IGNORE_NULLS = auto()
     ILIKE = auto()
@@ -161,6 +178,7 @@ class TokenType(AutoName):
     IS = auto()
     ISNULL = auto()
     JOIN = auto()
+    LANGUAGE = auto()
     LATERAL = auto()
     LAZY = auto()
     LEADING = auto()
@@ -169,6 +187,7 @@ class TokenType(AutoName):
     LIMIT = auto()
     LOCATION = auto()
     MAP = auto()
+    MATERIALIZED = auto()
     MOD = auto()
     NATURAL = auto()
     NEXT = auto()
@@ -192,6 +211,7 @@ class TokenType(AutoName):
     PARTITION_BY = auto()
     PARTITIONED_BY = auto()
     PERCENT = auto()
+    PIVOT = auto()
     PLACEHOLDER = auto()
     PRECEDING = auto()
     PRIMARY_KEY = auto()
@@ -203,12 +223,14 @@ class TokenType(AutoName):
     REPLACE = auto()
     RESPECT_NULLS = auto()
     REFERENCES = auto()
+    RETURNS = auto()
     RIGHT = auto()
     RLIKE = auto()
     ROLLUP = auto()
     ROW = auto()
     ROWS = auto()
     SCHEMA_COMMENT = auto()
+    SEED = auto()
     SELECT = auto()
     SEPARATOR = auto()
     SET = auto()
@@ -230,6 +252,7 @@ class TokenType(AutoName):
     UNCACHE = auto()
     UNION = auto()
     UNNEST = auto()
+    UNPIVOT = auto()
     UPDATE = auto()
     USE = auto()
     USING = auto()
@@ -240,6 +263,7 @@ class TokenType(AutoName):
     WINDOW = auto()
     WITH = auto()
     WITH_TIME_ZONE = auto()
+    WITH_LOCAL_TIME_ZONE = auto()
     WITHIN_GROUP = auto()
     WITHOUT_TIME_ZONE = auto()
     UNIQUE = auto()
@@ -333,7 +357,7 @@ class Tokenizer(metaclass=_Tokenizer):
         "~": TokenType.TILDA,
         "?": TokenType.PLACEHOLDER,
         "#": TokenType.ANNOTATION,
-        "$": TokenType.DOLLAR,
+        "@": TokenType.PARAMETER,
         # used for breaking a var like x'y' but nothing else
         # the token type doesn't matter
         "'": TokenType.QUOTE,
@@ -423,6 +447,7 @@ class Tokenizer(metaclass=_Tokenizer):
         "FULL": TokenType.FULL,
         "FUNCTION": TokenType.FUNCTION,
         "FOLLOWING": TokenType.FOLLOWING,
+        "FOR": TokenType.FOR,
         "FOREIGN KEY": TokenType.FOREIGN_KEY,
         "FORMAT": TokenType.FORMAT,
         "FROM": TokenType.FROM,
@@ -442,6 +467,7 @@ class Tokenizer(metaclass=_Tokenizer):
         "IS": TokenType.IS,
         "ISNULL": TokenType.ISNULL,
         "JOIN": TokenType.JOIN,
+        "LANGUAGE": TokenType.LANGUAGE,
         "LATERAL": TokenType.LATERAL,
         "LAZY": TokenType.LAZY,
         "LEADING": TokenType.LEADING,
@@ -449,6 +475,7 @@ class Tokenizer(metaclass=_Tokenizer):
         "LIKE": TokenType.LIKE,
         "LIMIT": TokenType.LIMIT,
         "LOCATION": TokenType.LOCATION,
+        "MATERIALIZED": TokenType.MATERIALIZED,
         "NATURAL": TokenType.NATURAL,
         "NEXT": TokenType.NEXT,
         "NO ACTION": TokenType.NO_ACTION,
@@ -456,6 +483,7 @@ class Tokenizer(metaclass=_Tokenizer):
         "NULL": TokenType.NULL,
         "NULLS FIRST": TokenType.NULLS_FIRST,
         "NULLS LAST": TokenType.NULLS_LAST,
+        "OBJECT": TokenType.OBJECT,
         "OFFSET": TokenType.OFFSET,
         "ON": TokenType.ON,
         "ONLY": TokenType.ONLY,
@@ -471,7 +499,9 @@ class Tokenizer(metaclass=_Tokenizer):
         "PARTITION": TokenType.PARTITION,
         "PARTITION BY": TokenType.PARTITION_BY,
         "PARTITIONED BY": TokenType.PARTITIONED_BY,
+        "PARTITIONED_BY": TokenType.PARTITIONED_BY,
         "PERCENT": TokenType.PERCENT,
+        "PIVOT": TokenType.PIVOT,
         "PRECEDING": TokenType.PRECEDING,
         "PRIMARY KEY": TokenType.PRIMARY_KEY,
         "RANGE": TokenType.RANGE,
@@ -480,11 +510,13 @@ class Tokenizer(metaclass=_Tokenizer):
         "REPLACE": TokenType.REPLACE,
         "RESPECT NULLS": TokenType.RESPECT_NULLS,
         "REFERENCES": TokenType.REFERENCES,
+        "RETURNS": TokenType.RETURNS,
         "RIGHT": TokenType.RIGHT,
         "RLIKE": TokenType.RLIKE,
         "ROLLUP": TokenType.ROLLUP,
         "ROW": TokenType.ROW,
         "ROWS": TokenType.ROWS,
+        "SEED": TokenType.SEED,
         "SELECT": TokenType.SELECT,
         "SET": TokenType.SET,
         "SHOW": TokenType.SHOW,
@@ -503,6 +535,7 @@ class Tokenizer(metaclass=_Tokenizer):
         "TRUNCATE": TokenType.TRUNCATE,
         "UNBOUNDED": TokenType.UNBOUNDED,
         "UNION": TokenType.UNION,
+        "UNPIVOT": TokenType.UNPIVOT,
         "UNNEST": TokenType.UNNEST,
         "UPDATE": TokenType.UPDATE,
         "USE": TokenType.USE,
@@ -513,6 +546,7 @@ class Tokenizer(metaclass=_Tokenizer):
         "WHERE": TokenType.WHERE,
         "WITH": TokenType.WITH,
         "WITH TIME ZONE": TokenType.WITH_TIME_ZONE,
+        "WITH LOCAL TIME ZONE": TokenType.WITH_LOCAL_TIME_ZONE,
         "WITHIN GROUP": TokenType.WITHIN_GROUP,
         "WITHOUT TIME ZONE": TokenType.WITHOUT_TIME_ZONE,
         "ARRAY": TokenType.ARRAY,
@@ -554,10 +588,12 @@ class Tokenizer(metaclass=_Tokenizer):
         "BYTEA": TokenType.BINARY,
         "TIMESTAMP": TokenType.TIMESTAMP,
         "TIMESTAMPTZ": TokenType.TIMESTAMPTZ,
+        "TIMESTAMPLTZ": TokenType.TIMESTAMPLTZ,
         "DATE": TokenType.DATE,
         "DATETIME": TokenType.DATETIME,
         "UNIQUE": TokenType.UNIQUE,
         "STRUCT": TokenType.STRUCT,
+        "VARIANT": TokenType.VARIANT,
     }
 
     WHITE_SPACE = {

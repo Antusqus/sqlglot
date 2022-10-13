@@ -1,12 +1,17 @@
-import inspect
+import numbers
 import re
-import sys
 from collections import deque
 from copy import deepcopy
 from enum import auto
 
 from sqlglot.errors import ParseError
-from sqlglot.helper import AutoName, camel_to_snake_case, ensure_list
+from sqlglot.helper import (
+    AutoName,
+    camel_to_snake_case,
+    ensure_list,
+    list_get,
+    subclasses,
+)
 
 
 class _Expression(type):
@@ -30,12 +35,13 @@ class Expression(metaclass=_Expression):
 
     key = None
     arg_types = {"this": True}
-    __slots__ = ("args", "parent", "arg_key")
+    __slots__ = ("args", "parent", "arg_key", "type")
 
     def __init__(self, **args):
         self.args = args
         self.parent = None
         self.arg_key = None
+        self.type = None
 
         for arg_key, value in self.args.items():
             self._set_parent(arg_key, value)
@@ -350,7 +356,8 @@ class Expression(metaclass=_Expression):
 
         Args:
             fun (function): a function which takes a node as an argument and returns a
-                new transformed node or the same node without modifications.
+                new transformed node or the same node without modifications. If the function
+                returns None, then the corresponding node will be removed from the syntax tree.
             copy (bool): if set to True a new tree instance is constructed, otherwise the tree is
                 modified in place.
 
@@ -360,9 +367,7 @@ class Expression(metaclass=_Expression):
         node = self.copy() if copy else self
         new_node = fun(node, *args, **kwargs)
 
-        if new_node is None:
-            raise ValueError("A transformed node cannot be None")
-        if not isinstance(new_node, Expression):
+        if new_node is None or not isinstance(new_node, Expression):
             return new_node
         if new_node is not node:
             new_node.parent = node.parent
@@ -384,7 +389,7 @@ class Expression(metaclass=_Expression):
             'SELECT y FROM tbl'
 
         Args:
-            expression (Expression): new node
+            expression (Expression|None): new node
 
         Returns :
             the new expression or expressions
@@ -397,6 +402,12 @@ class Expression(metaclass=_Expression):
 
         replace_children(parent, lambda child: expression if child is self else child)
         return expression
+
+    def pop(self):
+        """
+        Remove this expression from its AST.
+        """
+        self.replace(None)
 
     def assert_is(self, type_):
         """
@@ -495,6 +506,10 @@ class DerivedTable(Expression):
         return [select.alias_or_name for select in self.selects]
 
 
+class UDTF(DerivedTable):
+    pass
+
+
 class Annotation(Expression):
     arg_types = {
         "this": True,
@@ -527,7 +542,16 @@ class Create(Expression):
         "temporary": False,
         "replace": False,
         "unique": False,
+        "materialized": False,
     }
+
+
+class UserDefinedFunction(Expression):
+    arg_types = {"this": True, "expressions": False}
+
+
+class UserDefinedFunctionKwarg(Expression):
+    arg_types = {"this": True, "kind": True, "default": False}
 
 
 class CharacterSet(Expression):
@@ -582,35 +606,44 @@ class ColumnConstraint(Expression):
     arg_types = {"this": False, "kind": True}
 
 
-class AutoIncrementColumnConstraint(Expression):
+class ColumnConstraintKind(Expression):
     pass
 
 
-class CheckColumnConstraint(Expression):
+class AutoIncrementColumnConstraint(ColumnConstraintKind):
     pass
 
 
-class CollateColumnConstraint(Expression):
+class CheckColumnConstraint(ColumnConstraintKind):
     pass
 
 
-class CommentColumnConstraint(Expression):
+class CollateColumnConstraint(ColumnConstraintKind):
     pass
 
 
-class DefaultColumnConstraint(Expression):
+class CommentColumnConstraint(ColumnConstraintKind):
     pass
 
 
-class NotNullColumnConstraint(Expression):
+class DefaultColumnConstraint(ColumnConstraintKind):
     pass
 
 
-class PrimaryKeyColumnConstraint(Expression):
+class GeneratedAsIdentityColumnConstraint(ColumnConstraintKind):
+    # this: True -> ALWAYS, this: False -> BY DEFAULT
+    arg_types = {"this": True, "expression": False}
+
+
+class NotNullColumnConstraint(ColumnConstraintKind):
     pass
 
 
-class UniqueColumnConstraint(Expression):
+class PrimaryKeyColumnConstraint(ColumnConstraintKind):
+    pass
+
+
+class UniqueColumnConstraint(ColumnConstraintKind):
     pass
 
 
@@ -798,7 +831,7 @@ class Join(Expression):
         return join
 
 
-class Lateral(DerivedTable):
+class Lateral(UDTF):
     arg_types = {"this": True, "outer": False, "alias": False}
 
 
@@ -832,10 +865,6 @@ class Sort(Order):
 
 class Ordered(Expression):
     arg_types = {"this": True, "desc": True, "nulls_first": True}
-
-
-class Properties(Expression):
-    arg_types = {"expressions": True}
 
 
 class Property(Expression):
@@ -880,6 +909,38 @@ class SchemaCommentProperty(Property):
 
 class AnonymousProperty(Property):
     pass
+
+
+class ReturnsProperty(Property):
+    arg_types = {"this": True, "value": True, "is_table": False}
+
+
+class LanguageProperty(Property):
+    pass
+
+
+class Properties(Expression):
+    arg_types = {"expressions": True}
+
+    PROPERTY_KEY_MAPPING = {
+        "AUTO_INCREMENT": AutoIncrementProperty,
+        "CHARACTER_SET": CharacterSetProperty,
+        "COLLATE": CollateProperty,
+        "COMMENT": SchemaCommentProperty,
+        "ENGINE": EngineProperty,
+        "FORMAT": FileFormatProperty,
+        "LOCATION": LocationProperty,
+        "PARTITIONED_BY": PartitionedByProperty,
+        "TABLE_FORMAT": TableFormatProperty,
+    }
+
+    @classmethod
+    def from_dict(cls, properties_dict):
+        expressions = []
+        for key, value in properties_dict.items():
+            property_cls = cls.PROPERTY_KEY_MAPPING.get(key.upper(), AnonymousProperty)
+            expressions.append(property_cls(this=Literal.string(key), value=convert(value)))
+        return cls(expressions=expressions)
 
 
 class Qualify(Expression):
@@ -985,6 +1046,7 @@ class Subqueryable:
 QUERY_MODIFIERS = {
     "laterals": False,
     "joins": False,
+    "pivots": False,
     "where": False,
     "group": False,
     "having": False,
@@ -1006,6 +1068,7 @@ class Table(Expression):
         "catalog": False,
         "laterals": False,
         "joins": False,
+        "pivots": False,
     }
 
 
@@ -1039,7 +1102,7 @@ class Intersect(Union):
     pass
 
 
-class Unnest(DerivedTable):
+class Unnest(UDTF):
     arg_types = {
         "expressions": True,
         "ordinality": False,
@@ -1057,8 +1120,12 @@ class Update(Expression):
     }
 
 
-class Values(Expression):
-    arg_types = {"expressions": True}
+class Values(UDTF):
+    arg_types = {
+        "expressions": True,
+        "ordinality": False,
+        "alias": False,
+    }
 
 
 class Var(Expression):
@@ -1553,15 +1620,7 @@ class Select(Subqueryable, Expression):
         )
         properties_expression = None
         if properties:
-            properties_str = " ".join(
-                [f"{k} = '{v}'" if isinstance(v, str) else f"{k} = {v}" for k, v in properties.items()]
-            )
-            properties_expression = maybe_parse(
-                properties_str,
-                into=Properties,
-                dialect=dialect,
-                **opts,
-            )
+            properties_expression = Properties.from_dict(properties)
 
         return Create(
             this=table_expression,
@@ -1606,6 +1665,16 @@ class TableSample(Expression):
         "percent": False,
         "rows": False,
         "size": False,
+        "seed": False,
+    }
+
+
+class Pivot(Expression):
+    arg_types = {
+        "this": False,
+        "expressions": True,
+        "field": True,
+        "unpivot": True,
     }
 
 
@@ -1639,6 +1708,10 @@ class Star(Expression):
     @property
     def name(self):
         return "*"
+
+
+class Parameter(Expression):
+    pass
 
 
 class Placeholder(Expression):
@@ -1679,6 +1752,7 @@ class DataType(Expression):
         INTERVAL = auto()
         TIMESTAMP = auto()
         TIMESTAMPTZ = auto()
+        TIMESTAMPLTZ = auto()
         DATE = auto()
         DATETIME = auto()
         ARRAY = auto()
@@ -1690,6 +1764,17 @@ class DataType(Expression):
         NULLABLE = auto()
         HLLSKETCH = auto()
         SUPER = auto()
+        SERIAL = auto()
+        SMALLSERIAL = auto()
+        BIGSERIAL = auto()
+        XML = auto()
+        UNIQUEIDENTIFIER = auto()
+        MONEY = auto()
+        SMALLMONEY = auto()
+        ROWVERSION = auto()
+        IMAGE = auto()
+        VARIANT = auto()
+        OBJECT = auto()
 
     @classmethod
     def build(cls, dtype, **kwargs):
@@ -2072,6 +2157,7 @@ class TryCast(Cast):
 
 
 class Ceil(Func):
+    arg_types = {"this": True, "decimals": False}
     _sql_names = ["CEIL", "CEILING"]
 
 
@@ -2202,7 +2288,7 @@ class Explode(Func):
 
 
 class Floor(Func):
-    pass
+    arg_types = {"this": True, "decimals": False}
 
 
 class Greatest(Func):
@@ -2310,12 +2396,16 @@ class Quantile(AggFunc):
     arg_types = {"this": True, "quantile": True}
 
 
+class ApproxQuantile(Quantile):
+    pass
+
+
 class Reduce(Func):
     arg_types = {"this": True, "initial": True, "merge": True, "finish": True}
 
 
 class RegexpLike(Func):
-    arg_types = {"this": True, "expression": True}
+    arg_types = {"this": True, "expression": True, "flag": False}
 
 
 class RegexpSplit(Func):
@@ -2486,6 +2576,8 @@ def _norm_args(expression):
     for k, arg in expression.args.items():
         if isinstance(arg, list):
             arg = [_norm_arg(a) for a in arg]
+            if not arg:
+                arg = None
         else:
             arg = _norm_arg(arg)
 
@@ -2499,17 +2591,7 @@ def _norm_arg(arg):
     return arg.lower() if isinstance(arg, str) else arg
 
 
-def _all_functions():
-    return [
-        obj
-        for _, obj in inspect.getmembers(
-            sys.modules[__name__],
-            lambda obj: inspect.isclass(obj) and issubclass(obj, Func) and obj not in (AggFunc, Anonymous, Func),
-        )
-    ]
-
-
-ALL_FUNCTIONS = _all_functions()
+ALL_FUNCTIONS = subclasses(__name__, Func, (AggFunc, Anonymous, Func))
 
 
 def maybe_parse(
@@ -2739,6 +2821,37 @@ def from_(*expressions, dialect=None, **opts):
     return Select().from_(*expressions, dialect=dialect, **opts)
 
 
+def update(table, properties, where=None, from_=None, dialect=None, **opts):
+    """
+    Creates an update statement.
+
+    Example:
+        >>> update("my_table", {"x": 1, "y": "2", "z": None}, from_="baz", where="id > 1").sql()
+        "UPDATE my_table SET x = 1, y = '2', z = NULL FROM baz WHERE id > 1"
+
+    Args:
+        *properties (Dict[str, Any]): dictionary of properties to set which are
+            auto converted to sql objects eg None -> NULL
+        where (str): sql conditional parsed into a WHERE statement
+        from_ (str): sql statement parsed into a FROM statement
+        dialect (str): the dialect used to parse the input expressions.
+        **opts: other options to use to parse the input expressions.
+
+    Returns:
+        Update: the syntax tree for the UPDATE statement.
+    """
+    update = Update(this=maybe_parse(table, into=Table, dialect=dialect))
+    update.set(
+        "expressions",
+        [EQ(this=maybe_parse(k, dialect=dialect, **opts), expression=convert(v)) for k, v in properties.items()],
+    )
+    if from_:
+        update.set("from", maybe_parse(from_, into=From, dialect=dialect, prefix="FROM", **opts))
+    if where:
+        update.set("where", maybe_parse(where, into=Where, dialect=dialect, prefix="WHERE", **opts))
+    return update
+
+
 def condition(expression, dialect=None, **opts):
     """
     Initialize a logical condition expression.
@@ -2926,12 +3039,13 @@ def column(col, table=None, quoted=None):
 
 
 def table_(table, db=None, catalog=None, quoted=None):
-    """
-    Build a Table.
+    """Build a Table.
+
     Args:
         table (str or Expression): column name
         db (str or Expression): db name
         catalog (str or Expression): catalog name
+
     Returns:
         Table: table instance
     """
@@ -2940,6 +3054,39 @@ def table_(table, db=None, catalog=None, quoted=None):
         db=to_identifier(db, quoted=quoted),
         catalog=to_identifier(catalog, quoted=quoted),
     )
+
+
+def convert(value):
+    """Convert a python value into an expression object.
+
+    Raises an error if a conversion is not possible.
+
+    Args:
+        value (Any): a python object
+
+    Returns:
+        Expression: the equivalent expression object
+    """
+    if isinstance(value, Expression):
+        return value
+    if value is None:
+        return NULL
+    if isinstance(value, bool):
+        return Boolean(this=value)
+    if isinstance(value, str):
+        return Literal.string(value)
+    if isinstance(value, numbers.Number):
+        return Literal.number(value)
+    if isinstance(value, tuple):
+        return Tuple(expressions=[convert(v) for v in value])
+    if isinstance(value, list):
+        return Array(expressions=[convert(v) for v in value])
+    if isinstance(value, dict):
+        return Map(
+            keys=[convert(k) for k in value.keys()],
+            values=[convert(v) for v in value.values()],
+        )
+    raise ValueError(f"Cannot convert {value}")
 
 
 def replace_children(expression, fun):
@@ -2962,7 +3109,7 @@ def replace_children(expression, fun):
             else:
                 new_child_nodes.append(cn)
 
-        expression.args[k] = new_child_nodes if is_list_arg else new_child_nodes[0]
+        expression.args[k] = new_child_nodes if is_list_arg else list_get(new_child_nodes, 0)
 
 
 def column_table_names(expression):

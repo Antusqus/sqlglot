@@ -1,5 +1,9 @@
 from sqlglot import exp
-from sqlglot.dialects.dialect import no_ilike_sql, rename_func
+from sqlglot.dialects.dialect import (
+    create_with_partitions_sql,
+    no_ilike_sql,
+    rename_func,
+)
 from sqlglot.dialects.hive import Hive, HiveMap
 from sqlglot.helper import list_get
 
@@ -10,7 +14,7 @@ def _create_sql(self, e):
 
     if kind.upper() == "TABLE" and temporary is True:
         return f"CREATE TEMPORARY VIEW {self.sql(e, 'this')} AS {self.sql(e, 'expression')}"
-    return self.create_sql(e)
+    return create_with_partitions_sql(self, e)
 
 
 def _map_sql(self, expression):
@@ -43,6 +47,8 @@ def _unix_to_time(self, expression):
 
 
 class Spark(Hive):
+    wrap_derived_values = False
+
     class Parser(Hive.Parser):
         FUNCTIONS = {
             **Hive.Parser.FUNCTIONS,
@@ -69,9 +75,11 @@ class Spark(Hive):
                 ),
                 length=list_get(args, 1),
             ),
+            "APPROX_PERCENTILE": exp.ApproxQuantile.from_arg_list,
         }
 
     class Generator(Hive.Generator):
+
         TYPE_MAPPING = {
             **Hive.Generator.TYPE_MAPPING,
             exp.DataType.Type.TINYINT: "BYTE",
@@ -81,6 +89,7 @@ class Spark(Hive):
 
         TRANSFORMS = {
             **{k: v for k, v in Hive.Generator.TRANSFORMS.items() if k not in {exp.ArraySort}},
+            exp.FileFormatProperty: lambda self, e: f"USING {e.text('value').upper()}",
             exp.ArraySum: lambda self, e: f"AGGREGATE({self.sql(e, 'this')}, 0, (acc, x) -> acc + x, acc -> acc)",
             exp.BitwiseLeftShift: rename_func("SHIFTLEFT"),
             exp.BitwiseRightShift: rename_func("SHIFTRIGHT"),

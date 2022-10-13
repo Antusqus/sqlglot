@@ -28,6 +28,7 @@ class Dialects(str, Enum):
     STARROCKS = "starrocks"
     TABLEAU = "tableau"
     TRINO = "trino"
+    TSQL = "tsql"
 
 
 class _Dialect(type):
@@ -54,7 +55,6 @@ class _Dialect(type):
         klass.parser_class = getattr(klass, "Parser", Parser)
         klass.generator_class = getattr(klass, "Generator", Generator)
 
-        klass.tokenizer = klass.tokenizer_class()
         klass.quote_start, klass.quote_end = list(klass.tokenizer_class._QUOTES.items())[0]
         klass.identifier_start, klass.identifier_end = list(klass.tokenizer_class._IDENTIFIERS.items())[0]
 
@@ -77,6 +77,7 @@ class Dialect(metaclass=_Dialect):
     alias_post_tablesample = False
     normalize_functions = "upper"
     null_ordering = "nulls_are_small"
+    wrap_derived_values = True
 
     date_format = "'%Y-%m-%d'"
     dateint_format = "'%Y%m%d'"
@@ -95,7 +96,6 @@ class Dialect(metaclass=_Dialect):
     tokenizer_class = None
     parser_class = None
     generator_class = None
-    tokenizer = None
 
     @classmethod
     def get_or_raise(cls, dialect):
@@ -138,6 +138,12 @@ class Dialect(metaclass=_Dialect):
     def transpile(self, code, **opts):
         return self.generate(self.parse(code), **opts)
 
+    @property
+    def tokenizer(self):
+        if not hasattr(self, "_tokenizer"):
+            self._tokenizer = self.tokenizer_class()
+        return self._tokenizer
+
     def parser(self, **opts):
         return self.parser_class(
             **{
@@ -164,13 +170,22 @@ class Dialect(metaclass=_Dialect):
                 "alias_post_tablesample": self.alias_post_tablesample,
                 "normalize_functions": self.normalize_functions,
                 "null_ordering": self.null_ordering,
+                "wrap_derived_values": self.wrap_derived_values,
                 **opts,
             }
         )
 
 
 def rename_func(name):
-    return lambda self, expression: f"{name}({csv(*[self.sql(e) for e in expression.args.values()])})"
+    def _rename(self, expression):
+        args = (
+            self.expressions(expression, flat=True)
+            if isinstance(expression, exp.Func) and expression.is_var_len_args
+            else csv(*[self.sql(e) for e in expression.args.values()])
+        )
+        return f"{name}({args})"
+
+    return _rename
 
 
 def approx_count_distinct_sql(self, expression):
@@ -232,6 +247,11 @@ def no_tablesample_sql(self, expression):
     return self.sql(expression.this)
 
 
+def no_pivot_sql(self, expression):
+    self.unsupported("PIVOT unsupported")
+    return self.sql(expression)
+
+
 def no_trycast_sql(self, expression):
     return self.cast_sql(expression)
 
@@ -269,3 +289,30 @@ def format_time_lambda(exp_class, dialect, default=None):
         )
 
     return _format_time
+
+
+def create_with_partitions_sql(self, expression):
+    """
+    In Hive and Spark, the PARTITIONED BY property acts as an extension of a table's schema. When the
+    PARTITIONED BY value is an array of column names, they are transformed into a schema. The corresponding
+    columns are removed from the create statement.
+    """
+    has_schema = isinstance(expression.this, exp.Schema)
+    is_partitionable = expression.args.get("kind") in ("TABLE", "VIEW")
+
+    if has_schema and is_partitionable:
+        expression = expression.copy()
+        prop = expression.find(exp.PartitionedByProperty)
+        value = prop and prop.args.get("value")
+        if prop and not isinstance(value, exp.Schema):
+            schema = expression.this
+            columns = {v.name.upper() for v in value.expressions}
+            partitions = [col for col in schema.expressions if col.name.upper() in columns]
+            schema.set(
+                "expressions",
+                [e for e in schema.expressions if e not in partitions],
+            )
+            prop.replace(exp.PartitionedByProperty(this=prop.this, value=exp.Schema(expressions=partitions)))
+            expression.set("this", schema)
+
+    return self.create_sql(expression)

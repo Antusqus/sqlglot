@@ -33,6 +33,49 @@ def _date_add_sql(data_type, kind):
     return func
 
 
+def _derived_table_values_to_unnest(self, expression):
+    if not isinstance(expression.unnest().parent, exp.From):
+        return self.values_sql(expression)
+    rows = [list(tuple_exp.find_all(exp.Literal)) for tuple_exp in expression.find_all(exp.Tuple)]
+    structs = []
+    for row in rows:
+        aliases = [
+            exp.alias_(value, column_name) for value, column_name in zip(row, expression.args["alias"].args["columns"])
+        ]
+        structs.append(exp.Struct(expressions=aliases))
+    unnest_exp = exp.Unnest(expressions=[exp.Array(expressions=structs)])
+    return self.unnest_sql(unnest_exp)
+
+
+def _returnsproperty_sql(self, expression):
+    value = expression.args.get("value")
+    if isinstance(value, exp.Schema):
+        value = f"{value.this} <{self.expressions(value)}>"
+    else:
+        value = self.sql(value)
+    return f"RETURNS {value}"
+
+
+def _create_sql(self, expression):
+    kind = expression.args.get("kind")
+    returns = expression.find(exp.ReturnsProperty)
+    if kind.upper() == "FUNCTION" and returns and returns.args.get("is_table"):
+        expression = expression.copy()
+        expression.set("kind", "TABLE FUNCTION")
+        if isinstance(
+            expression.expression,
+            (
+                exp.Subquery,
+                exp.Literal,
+            ),
+        ):
+            expression.set("expression", expression.expression.this)
+
+        return self.create_sql(expression)
+
+    return self.create_sql(expression)
+
+
 class BigQuery(Dialect):
     unnest_column_only = True
 
@@ -77,8 +120,14 @@ class BigQuery(Dialect):
             TokenType.CURRENT_TIME: exp.CurrentTime,
         }
 
+        NESTED_TYPE_TOKENS = {
+            *Parser.NESTED_TYPE_TOKENS,
+            TokenType.TABLE,
+        }
+
     class Generator(Generator):
         TRANSFORMS = {
+            **Generator.TRANSFORMS,
             exp.Array: inline_array_sql,
             exp.ArraySize: rename_func("ARRAY_LENGTH"),
             exp.DateAdd: _date_add_sql("DATE", "ADD"),
@@ -91,6 +140,9 @@ class BigQuery(Dialect):
             exp.TimestampAdd: _date_add_sql("TIMESTAMP", "ADD"),
             exp.TimestampSub: _date_add_sql("TIMESTAMP", "SUB"),
             exp.VariancePop: rename_func("VAR_POP"),
+            exp.Values: _derived_table_values_to_unnest,
+            exp.ReturnsProperty: _returnsproperty_sql,
+            exp.Create: _create_sql,
         }
 
         TYPE_MAPPING = {

@@ -1,3 +1,4 @@
+from sqlglot import ErrorLevel, UnsupportedError, transpile
 from tests.dialects.test_dialect import Validator
 
 
@@ -66,6 +67,9 @@ class TestDuckDB(Validator):
     def test_duckdb(self):
         self.validate_all(
             "LIST_VALUE(0, 1, 2)",
+            read={
+                "spark": "ARRAY(0, 1, 2)",
+            },
             write={
                 "bigquery": "[0, 1, 2]",
                 "duckdb": "LIST_VALUE(0, 1, 2)",
@@ -247,3 +251,10 @@ class TestDuckDB(Validator):
                 "spark": "MONTH('2021-03-01')",
             },
         )
+
+        with self.assertRaises(UnsupportedError):
+            transpile(
+                "SELECT a FROM b PIVOT(SUM(x) FOR y IN ('z', 'q'))",
+                read="duckdb",
+                unsupported_level=ErrorLevel.IMMEDIATE,
+            )

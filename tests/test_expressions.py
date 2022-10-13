@@ -27,6 +27,8 @@ class TestExpressions(unittest.TestCase):
             parse_one("ROW() OVER (partition BY y)"),
         )
         self.assertEqual(parse_one("TO_DATE(x)", read="hive"), parse_one("ts_or_ds_to_date(x)"))
+        self.assertEqual(exp.Table(pivots=[]), exp.Table())
+        self.assertNotEqual(exp.Table(pivots=[None]), exp.Table())
 
     def test_find(self):
         expression = parse_one("CREATE TABLE x STORED AS PARQUET AS SELECT * FROM y")
@@ -224,9 +226,6 @@ class TestExpressions(unittest.TestCase):
         self.assertEqual(actual_expression_2.sql(dialect="presto"), "IF(c - 2 > 0, c - 2, b)")
         self.assertIs(actual_expression_2, expression)
 
-        with self.assertRaises(ValueError):
-            parse_one("a").transform(lambda n: None)
-
     def test_transform_no_infinite_recursion(self):
         expression = parse_one("a")
 
@@ -247,12 +246,54 @@ class TestExpressions(unittest.TestCase):
 
         self.assertEqual(expression.transform(fun).sql(), "SELECT a, b FROM x")
 
+    def test_transform_node_removal(self):
+        expression = parse_one("SELECT a, b FROM x")
+
+        def remove_column_b(node):
+            if isinstance(node, exp.Column) and node.name == "b":
+                return None
+            return node
+
+        self.assertEqual(expression.transform(remove_column_b).sql(), "SELECT a FROM x")
+        self.assertEqual(expression.transform(lambda _: None), None)
+
+        expression = parse_one("CAST(x AS FLOAT)")
+
+        def remove_non_list_arg(node):
+            if isinstance(node, exp.DataType):
+                return None
+            return node
+
+        self.assertEqual(expression.transform(remove_non_list_arg).sql(), "CAST(x AS )")
+
+        expression = parse_one("SELECT a, b FROM x")
+
+        def remove_all_columns(node):
+            if isinstance(node, exp.Column):
+                return None
+            return node
+
+        self.assertEqual(expression.transform(remove_all_columns).sql(), "SELECT FROM x")
+
     def test_replace(self):
         expression = parse_one("SELECT a, b FROM x")
         expression.find(exp.Column).replace(parse_one("c"))
         self.assertEqual(expression.sql(), "SELECT c, b FROM x")
         expression.find(exp.Table).replace(parse_one("y"))
         self.assertEqual(expression.sql(), "SELECT c, b FROM y")
+
+    def test_pop(self):
+        expression = parse_one("SELECT a, b FROM x")
+        expression.find(exp.Column).pop()
+        self.assertEqual(expression.sql(), "SELECT b FROM x")
+        expression.find(exp.Column).pop()
+        self.assertEqual(expression.sql(), "SELECT FROM x")
+        expression.pop()
+        self.assertEqual(expression.sql(), "SELECT FROM x")
+
+        expression = parse_one("WITH x AS (SELECT a FROM x) SELECT * FROM x")
+        expression.find(exp.With).pop()
+        self.assertEqual(expression.sql(), "SELECT * FROM x")
 
     def test_walk(self):
         expression = parse_one("SELECT * FROM (SELECT * FROM x)")
@@ -290,6 +331,7 @@ class TestExpressions(unittest.TestCase):
         self.assertIsInstance(parse_one("MAX(a)"), exp.Max)
         self.assertIsInstance(parse_one("MIN(a)"), exp.Min)
         self.assertIsInstance(parse_one("MONTH(a)"), exp.Month)
+        self.assertIsInstance(parse_one("POSITION(' ' IN a)"), exp.StrPosition)
         self.assertIsInstance(parse_one("POW(a, 2)"), exp.Pow)
         self.assertIsInstance(parse_one("POWER(a, 2)"), exp.Pow)
         self.assertIsInstance(parse_one("QUANTILE(a, 0.90)"), exp.Quantile)
@@ -388,3 +430,47 @@ class TestExpressions(unittest.TestCase):
         self.assertEqual(parse_one("heLLO()").sql(normalize_functions=None), "heLLO()")
         self.assertEqual(parse_one("SUM(x)").sql(normalize_functions="lower"), "sum(x)")
         self.assertEqual(parse_one("sum(x)").sql(normalize_functions="upper"), "SUM(x)")
+
+    def test_properties_from_dict(self):
+        self.assertEqual(
+            exp.Properties.from_dict(
+                {
+                    "FORMAT": "parquet",
+                    "PARTITIONED_BY": (exp.to_identifier("a"), exp.to_identifier("b")),
+                    "custom": 1,
+                    "TABLE_FORMAT": exp.to_identifier("test_format"),
+                    "ENGINE": None,
+                    "COLLATE": True,
+                }
+            ),
+            exp.Properties(
+                expressions=[
+                    exp.FileFormatProperty(this=exp.Literal.string("FORMAT"), value=exp.Literal.string("parquet")),
+                    exp.PartitionedByProperty(
+                        this=exp.Literal.string("PARTITIONED_BY"),
+                        value=exp.Tuple(expressions=[exp.to_identifier("a"), exp.to_identifier("b")]),
+                    ),
+                    exp.AnonymousProperty(this=exp.Literal.string("custom"), value=exp.Literal.number(1)),
+                    exp.TableFormatProperty(
+                        this=exp.Literal.string("TABLE_FORMAT"), value=exp.to_identifier("test_format")
+                    ),
+                    exp.EngineProperty(this=exp.Literal.string("ENGINE"), value=exp.NULL),
+                    exp.CollateProperty(this=exp.Literal.string("COLLATE"), value=exp.TRUE),
+                ]
+            ),
+        )
+
+        self.assertRaises(ValueError, exp.Properties.from_dict, {"FORMAT": object})
+
+    def test_convert(self):
+        for value, expected in [
+            (1, "1"),
+            ("1", "'1'"),
+            (None, "NULL"),
+            (True, "TRUE"),
+            ((1, "2", None), "(1, '2', NULL)"),
+            ([1, "2", None], "ARRAY(1, '2', NULL)"),
+            ({"x": None}, "MAP('x', NULL)"),
+        ]:
+            with self.subTest(value):
+                self.assertEqual(exp.convert(value).sql(), expected)

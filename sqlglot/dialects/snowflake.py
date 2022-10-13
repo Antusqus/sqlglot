@@ -1,5 +1,10 @@
 from sqlglot import exp
-from sqlglot.dialects.dialect import Dialect, format_time_lambda, rename_func
+from sqlglot.dialects.dialect import (
+    Dialect,
+    format_time_lambda,
+    inline_array_sql,
+    rename_func,
+)
 from sqlglot.expressions import Literal
 from sqlglot.generator import Generator
 from sqlglot.helper import list_get
@@ -104,6 +109,18 @@ class Snowflake(Dialect):
             "ARRAYAGG": exp.ArrayAgg.from_arg_list,
             "IFF": exp.If.from_arg_list,
             "TO_TIMESTAMP": _snowflake_to_timestamp,
+            "ARRAY_CONSTRUCT": exp.Array.from_arg_list,
+            "RLIKE": exp.RegexpLike.from_arg_list,
+        }
+
+        FUNCTION_PARSERS = {
+            **Parser.FUNCTION_PARSERS,
+            "DATE_PART": lambda self: self._parse_extract(),
+        }
+
+        FUNC_TOKENS = {
+            *Parser.FUNC_TOKENS,
+            TokenType.RLIKE,
         }
 
         COLUMN_OPERATORS = {
@@ -115,13 +132,29 @@ class Snowflake(Dialect):
             ),
         }
 
+        PROPERTY_PARSERS = {
+            **Parser.PROPERTY_PARSERS,
+            TokenType.PARTITION_BY: lambda self: self._parse_partitioned_by(),
+        }
+
     class Tokenizer(Tokenizer):
         QUOTES = ["'", "$$"]
         ESCAPE = "\\"
+
+        SINGLE_TOKENS = {
+            **Tokenizer.SINGLE_TOKENS,
+            "$": TokenType.DOLLAR,  # needed to break for quotes
+        }
+
         KEYWORDS = {
             **Tokenizer.KEYWORDS,
             "QUALIFY": TokenType.QUALIFY,
             "DOUBLE PRECISION": TokenType.DOUBLE,
+            "TIMESTAMP_LTZ": TokenType.TIMESTAMPLTZ,
+            "TIMESTAMP_NTZ": TokenType.TIMESTAMP,
+            "TIMESTAMP_TZ": TokenType.TIMESTAMPTZ,
+            "TIMESTAMPNTZ": TokenType.TIMESTAMP,
+            "SAMPLE": TokenType.TABLE_SAMPLE,
         }
 
     class Generator(Generator):
@@ -130,6 +163,20 @@ class Snowflake(Dialect):
             exp.If: rename_func("IFF"),
             exp.StrToTime: lambda self, e: f"TO_TIMESTAMP({self.sql(e, 'this')}, {self.format_time(e)})",
             exp.UnixToTime: _unix_to_time,
+            exp.Array: inline_array_sql,
+            exp.PartitionedByProperty: lambda self, e: f"PARTITION BY {self.sql(e, 'value')}",
+        }
+
+        TYPE_MAPPING = {
+            **Generator.TYPE_MAPPING,
+            exp.DataType.Type.TIMESTAMP: "TIMESTAMPNTZ",
+        }
+
+        ROOT_PROPERTIES = {
+            exp.PartitionedByProperty,
+            exp.ReturnsProperty,
+            exp.LanguageProperty,
+            exp.SchemaCommentProperty,
         }
 
         def except_op(self, expression):

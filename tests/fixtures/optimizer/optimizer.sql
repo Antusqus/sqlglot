@@ -65,18 +65,14 @@ WITH "cte1" AS (
   SELECT
     "x"."a" AS "a"
   FROM "x" AS "x"
-), "cte2" AS (
-  SELECT
-    "cte1"."a" + 1 AS "a"
-  FROM "cte1"
 )
 SELECT
   "cte1"."a" AS "a"
 FROM "cte1"
 UNION ALL
 SELECT
-  "cte2"."a" AS "a"
-FROM "cte2";
+  "cte1"."a" + 1 AS "a"
+FROM "cte1";
 
 SELECT a, SUM(b)
 FROM (
@@ -86,18 +82,19 @@ FROM (
 ) d
 WHERE (TRUE AND TRUE OR 'a' = 'b') AND a > 1
 GROUP BY a;
-SELECT
-  "x"."a" AS "a",
-  SUM("y"."b") AS "_col_1"
-FROM "x" AS "x"
-LEFT JOIN (
+WITH "_u_0" AS (
   SELECT
     MAX("y"."b") AS "_col_0",
     "y"."a" AS "_u_1"
   FROM "y" AS "y"
   GROUP BY
     "y"."a"
-) AS "_u_0"
+)
+SELECT
+  "x"."a" AS "a",
+  SUM("y"."b") AS "_col_1"
+FROM "x" AS "x"
+LEFT JOIN "_u_0" AS "_u_0"
   ON "x"."a" = "_u_0"."_u_1"
 JOIN "y" AS "y"
   ON "x"."a" = "y"."a"
@@ -127,3 +124,33 @@ LIMIT 1;
   FROM "y" AS "y"
 )
 LIMIT 1;
+
+# dialect: spark
+SELECT /*+ BROADCAST(y) */ x.b FROM x JOIN y ON x.b = y.b;
+SELECT /*+ BROADCAST(`y`) */
+  `x`.`b` AS `b`
+FROM `x` AS `x`
+JOIN `y` AS `y`
+  ON `x`.`b` = `y`.`b`;
+
+SELECT AGGREGATE(ARRAY(x.a, x.b), 0, (x, acc) -> x + acc + a) AS sum_agg FROM x;
+SELECT
+  AGGREGATE(ARRAY("x"."a", "x"."b"), 0, ("x", "acc") -> "x" + "acc" + "x"."a") AS "sum_agg"
+FROM "x" AS "x";
+
+SELECT cola, colb FROM (VALUES (1, 'test'), (2, 'test2')) AS tab(cola, colb);
+SELECT
+  "tab"."cola" AS "cola",
+  "tab"."colb" AS "colb"
+FROM (VALUES
+  (1, 'test'),
+  (2, 'test2')) AS "tab"("cola", "colb");
+
+# dialect: spark
+SELECT cola, colb FROM (VALUES (1, 'test'), (2, 'test2')) AS tab(cola, colb);
+SELECT
+  `tab`.`cola` AS `cola`,
+  `tab`.`colb` AS `colb`
+FROM VALUES
+  (1, 'test'),
+  (2, 'test2') AS `tab`(`cola`, `colb`);

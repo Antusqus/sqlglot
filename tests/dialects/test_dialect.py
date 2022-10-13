@@ -13,9 +13,6 @@ from sqlglot import (
 class Validator(unittest.TestCase):
     dialect = None
 
-    def validate(self, sql, target, **kwargs):
-        self.assertEqual(transpile(sql, **kwargs)[0], target)
-
     def validate_identity(self, sql):
         self.assertEqual(transpile(sql, read=self.dialect, write=self.dialect)[0], sql)
 
@@ -228,6 +225,7 @@ class TestDialect(Validator):
                 "duckdb": "STRPTIME(x, '%Y-%m-%dT%H:%M:%S')",
                 "hive": "CAST(FROM_UNIXTIME(UNIX_TIMESTAMP(x, 'yyyy-MM-ddTHH:mm:ss')) AS TIMESTAMP)",
                 "presto": "DATE_PARSE(x, '%Y-%m-%dT%H:%i:%S')",
+                "redshift": "TO_TIMESTAMP(x, 'YYYY-MM-DDTHH:MI:SS')",
                 "spark": "TO_TIMESTAMP(x, 'yyyy-MM-ddTHH:mm:ss')",
             },
         )
@@ -237,6 +235,7 @@ class TestDialect(Validator):
                 "duckdb": "STRPTIME('2020-01-01', '%Y-%m-%d')",
                 "hive": "CAST('2020-01-01' AS TIMESTAMP)",
                 "presto": "DATE_PARSE('2020-01-01', '%Y-%m-%d')",
+                "redshift": "TO_TIMESTAMP('2020-01-01', 'YYYY-MM-DD')",
                 "spark": "TO_TIMESTAMP('2020-01-01', 'yyyy-MM-dd')",
             },
         )
@@ -246,6 +245,7 @@ class TestDialect(Validator):
                 "duckdb": "STRPTIME(x, '%y')",
                 "hive": "CAST(FROM_UNIXTIME(UNIX_TIMESTAMP(x, 'yy')) AS TIMESTAMP)",
                 "presto": "DATE_PARSE(x, '%y')",
+                "redshift": "TO_TIMESTAMP(x, 'YY')",
                 "spark": "TO_TIMESTAMP(x, 'yy')",
             },
         )
@@ -255,6 +255,7 @@ class TestDialect(Validator):
                 "duckdb": "EPOCH(STRPTIME('2020-01-01', '%Y-%M-%d'))",
                 "hive": "UNIX_TIMESTAMP('2020-01-01', 'yyyy-mm-dd')",
                 "presto": "TO_UNIXTIME(DATE_PARSE('2020-01-01', '%Y-%i-%d'))",
+                "starrocks": "UNIX_TIMESTAMP('2020-01-01', '%Y-%i-%d')",
             },
         )
         self.validate_all(
@@ -263,6 +264,7 @@ class TestDialect(Validator):
                 "duckdb": "CAST('2020-01-01' AS DATE)",
                 "hive": "TO_DATE('2020-01-01')",
                 "presto": "DATE_PARSE('2020-01-01', '%Y-%m-%d %H:%i:%s')",
+                "starrocks": "TO_DATE('2020-01-01')",
             },
         )
         self.validate_all(
@@ -287,6 +289,7 @@ class TestDialect(Validator):
                 "duckdb": "STRFTIME(x, '%Y-%m-%d')",
                 "hive": "DATE_FORMAT(x, 'yyyy-MM-dd')",
                 "presto": "DATE_FORMAT(x, '%Y-%m-%d')",
+                "redshift": "TO_CHAR(x, 'YYYY-MM-DD')",
             },
         )
         self.validate_all(
@@ -295,6 +298,7 @@ class TestDialect(Validator):
                 "duckdb": "CAST(x AS TEXT)",
                 "hive": "CAST(x AS STRING)",
                 "presto": "CAST(x AS VARCHAR)",
+                "redshift": "CAST(x AS TEXT)",
             },
         )
         self.validate_all(
@@ -336,6 +340,7 @@ class TestDialect(Validator):
                 "duckdb": "STRFTIME(TO_TIMESTAMP(CAST(x AS BIGINT)), y)",
                 "hive": "FROM_UNIXTIME(x, y)",
                 "presto": "DATE_FORMAT(FROM_UNIXTIME(x), y)",
+                "starrocks": "FROM_UNIXTIME(x, y)",
             },
         )
         self.validate_all(
@@ -344,6 +349,7 @@ class TestDialect(Validator):
                 "duckdb": "TO_TIMESTAMP(CAST(x AS BIGINT))",
                 "hive": "FROM_UNIXTIME(x)",
                 "presto": "FROM_UNIXTIME(x)",
+                "starrocks": "FROM_UNIXTIME(x)",
             },
         )
         self.validate_all(
@@ -836,9 +842,19 @@ class TestDialect(Validator):
             },
         )
         self.validate_all(
+            "POSITION(' ' in x)",
+            write={
+                "duckdb": "STRPOS(x, ' ')",
+                "postgres": "STRPOS(x, ' ')",
+                "presto": "STRPOS(x, ' ')",
+                "spark": "LOCATE(' ', x)",
+            },
+        )
+        self.validate_all(
             "STR_POSITION(x, 'a')",
             write={
                 "duckdb": "STRPOS(x, 'a')",
+                "postgres": "STRPOS(x, 'a')",
                 "presto": "STRPOS(x, 'a')",
                 "spark": "LOCATE('a', x)",
             },
@@ -993,7 +1009,7 @@ class TestDialect(Validator):
         self.validate_all(
             "SELECT * FROM VALUES ('x'), ('y') AS t(z)",
             write={
-                "spark": "SELECT * FROM (VALUES ('x'), ('y')) AS t(z)",
+                "spark": "SELECT * FROM VALUES ('x'), ('y') AS t(z)",
             },
         )
         self.validate_all(
