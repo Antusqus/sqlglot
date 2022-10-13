@@ -1,5 +1,6 @@
 from sqlglot import exp
-from sqlglot.dialects.dialect import Dialect
+from sqlglot.dialects.dialect import Dialect, rename_func
+from sqlglot.dialects.mysql import MySQL
 from sqlglot.generator import Generator
 from sqlglot.parser import Parser
 from sqlglot.tokens import Tokenizer, TokenType
@@ -10,6 +11,7 @@ class TSQL(Dialect):
     time_format = "'yyyy-mm-dd hh:mm:ss'"
 
     class Tokenizer(Tokenizer):
+        # QUOTES = ["'"]
         IDENTIFIERS = ['"', ("[", "]")]
 
         KEYWORDS = {
@@ -32,13 +34,30 @@ class TSQL(Dialect):
         }
 
     class Parser(Parser):
+
         def _parse_convert(self):
             to = self._parse_types()
             self._match(TokenType.COMMA)
             this = self._parse_field()
             return self.expression(exp.Cast, this=this, to=to)
+        
+        FUNCTION_PARSERS = {
+        **Parser.FUNCTION_PARSERS,
+        "STRING_AGG": lambda self: self.expression(
+            exp.StrAgg,
+            this=self._parse_lambda(),
+            separator=self._match(TokenType.COMMA) and self._parse_field(),
+        ),
+        }
 
     class Generator(Generator):
+        TRANSFORMS = {
+        **Generator.TRANSFORMS,
+        exp.StrAgg: lambda self, e: f"""STRING_AGG({self.sql(e, "this")}, {self.sql(e, "separator") or "','"})""",
+        exp.GroupConcat: rename_func("STRING_AGG"),
+        exp.Length: lambda self, e: f"""LEN({self.sql(e, "this")})"""
+        }
+
         TYPE_MAPPING = {
             **Generator.TYPE_MAPPING,
             exp.DataType.Type.BOOLEAN: "BIT",

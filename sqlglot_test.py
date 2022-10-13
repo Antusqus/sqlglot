@@ -46,10 +46,12 @@ GROUP_CONCAT(CONCAT(CONCAT(UPPER(SUBSTR(`actor`.`first_name`, 1, 1)),
             SEPARATOR ', ') AS `actors`      
 """
 # print(repr(parse_one(mySQL_statement, "mysql" )))
-transpiled_statement = sqlglot.transpile(mySQL_statement, read="mysql", write="sqlserver")
-print(transpiled_statement)
-parsed_statement = repr(parse_one(transpiled_statement[0], "sqlserver"))
+transpiled_statement = sqlglot.transpile(mySQL_statement, read="mysql", write="tsql", pretty = True)
+for item in transpiled_statement:
+    print(item)
+
+# parsed_statement = repr(parse_one(transpiled_statement[0], "tsql"))
 # print(parsed_statement)
-# newtest = TestMySQL("test_introducers")
+newtest = TestMySQL("test_introducers")
 
 # print(newtest())
