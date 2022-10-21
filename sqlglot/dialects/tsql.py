@@ -11,7 +11,7 @@ class TSQL(Dialect):
     time_format = "'yyyy-mm-dd hh:mm:ss'"
 
     class Tokenizer(Tokenizer):
-        # QUOTES = ["'"]
+        QUOTES = ["'"]
         IDENTIFIERS = ['"', ("[", "]")]
 
         KEYWORDS = {
@@ -55,7 +55,10 @@ class TSQL(Dialect):
         **Generator.TRANSFORMS,
         exp.StrAgg: lambda self, e: f"""STRING_AGG({self.sql(e, "this")}, {self.sql(e, "separator") or "','"})""",
         exp.GroupConcat: rename_func("STRING_AGG"),
-        exp.Length: lambda self, e: f"""LEN({self.sql(e, "this")})"""
+        exp.Length: lambda self, e: f"""LEN({self.sql(e, "this")})""",
+
+        # TODO: Check Introducers concept in TSQL, to replace e.name with. For now, empty is good enough. 
+        exp.Introducer: lambda self, e: f"""{str(e).replace(e.name, "")}"""
         }
 
         TYPE_MAPPING = {
