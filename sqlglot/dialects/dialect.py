@@ -24,6 +24,7 @@ class Dialects(str, Enum):
     SNOWFLAKE = "snowflake"
     SPARK = "spark"
     SQLITE = "sqlite"
+    SQLSERVER = "sqlserver"
     STARROCKS = "starrocks"
     TABLEAU = "tableau"
     TRINO = "trino"
