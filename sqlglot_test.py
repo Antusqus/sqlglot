@@ -1,3 +1,4 @@
+from itertools import count
 from sqlglot import diff, parse_one
 from sqlglot import exp
 import sqlglot
@@ -45,13 +46,14 @@ GROUP_CONCAT(CONCAT(CONCAT(UPPER(SUBSTR(`actor`.`first_name`, 1, 1)),
                                                 LENGTH(`actor`.`last_name`))))))
             SEPARATOR ', ') AS `actors`      
 """
-# print(repr(parse_one(mySQL_statement, "mysql" )))
+parsed_statement = repr(parse_one(mySQL_statement, "mysql" ))
+# print(count(parsed_statement, "TABLE this"))
 transpiled_statement = sqlglot.transpile(mySQL_statement, read="mysql", write="tsql", pretty = True)
-# for item in transpiled_statement:
-    # print(item)
+for item in transpiled_statement:
+    print(item)
 
-parsed_statement = repr(parse_one(transpiled_statement[0], read="tsql"))
-print(parsed_statement)
+trans_parsed_statement = repr(parse_one(transpiled_statement[0], read="tsql"))
+# print(trans_parsed_statement.split(parsed_statement))
 # newtest = TestMySQL("test_introducers")
 
 # print(newtest())
