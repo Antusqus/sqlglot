@@ -122,13 +122,6 @@ x AT TIME ZONE 'UTC'
 CAST('2025-11-20 00:00:00+00' AS TIMESTAMP) AT TIME ZONE 'Africa/Cairo'
 SET x = 1
 SET -v
-ADD JAR s3://bucket
-ADD JARS s3://bucket, c
-ADD FILE s3://file
-ADD FILES s3://file, s3://a
-ADD ARCHIVE s3://file
-ADD ARCHIVES s3://file, s3://a
-BEGIN IMMEDIATE TRANSACTION
 COMMIT
 USE db
 NOT 1
@@ -149,7 +142,6 @@ SELECT 1 AS count FROM test
 SELECT 1 AS comment FROM test
 SELECT 1 AS numeric FROM test
 SELECT 1 AS number FROM test
-SELECT 1 AS number # annotation
 SELECT t.count
 SELECT DISTINCT x FROM test
 SELECT DISTINCT x, y FROM test
@@ -515,15 +507,22 @@ DELETE FROM x WHERE y > 1
 DELETE FROM y
 DELETE FROM event USING sales WHERE event.eventid = sales.eventid
 DELETE FROM event USING sales, USING bla WHERE event.eventid = sales.eventid
+PREPARE statement
+EXECUTE statement
 DROP TABLE a
 DROP TABLE a.b
 DROP TABLE IF EXISTS a
 DROP TABLE IF EXISTS a.b
+DROP TABLE a CASCADE
 DROP VIEW a
 DROP VIEW a.b
 DROP VIEW IF EXISTS a
 DROP VIEW IF EXISTS a.b
 SHOW TABLES
+USE db
+BEGIN
+ROLLBACK
+ROLLBACK TO b
 EXPLAIN SELECT * FROM x
 INSERT INTO x SELECT * FROM y
 INSERT INTO x (SELECT * FROM y)
@@ -570,3 +569,13 @@ SELECT * FROM (tbl1 LEFT JOIN tbl2 ON 1 = 1)
 SELECT * FROM (tbl1 JOIN tbl2 JOIN tbl3)
 SELECT * FROM (tbl1 JOIN (tbl2 JOIN tbl3) ON bla = foo)
 SELECT * FROM (tbl1 JOIN LATERAL (SELECT * FROM bla) AS tbl)
+SELECT CAST(x AS INT) /* comment */ FROM foo
+SELECT a /* x */, b /* x */
+SELECT * FROM foo /* x */, bla /* x */
+SELECT 1 /* comment */ + 1
+SELECT 1 /* c1 */ + 2 /* c2 */
+SELECT 1 /* c1 */ + 2 /* c2 */ + 3 /* c3 */
+SELECT 1 /* c1 */ + 2 /* c2 */, 3 /* c3 */
+SELECT x FROM a.b.c /* x */, e.f.g /* x */
+SELECT FOO(x /* c */) /* FOO */, b /* b */
+SELECT FOO(x /* c1 */ + y /* c2 */ + BLA(5 /* c3 */)) FROM VALUES (1 /* c4 */, "test" /* c5 */) /* c6 */

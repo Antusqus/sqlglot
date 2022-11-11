@@ -211,21 +211,34 @@ def _qualify_columns(scope, resolver):
             if column_table:
                 column.set("table", exp.to_identifier(column_table))
 
+    columns_missing_from_scope = []
     # Determine whether each reference in the order by clause is to a column or an alias.
     for ordered in scope.find_all(exp.Ordered):
         for column in ordered.find_all(exp.Column):
-            column_table = column.table
-            column_name = column.name
+            if (
+                not column.table
+                and column.parent is not ordered
+                and column.name in resolver.all_columns
+            ):
+                columns_missing_from_scope.append(column)
 
-            if column_table or column.parent is ordered or column_name not in resolver.all_columns:
-                continue
+    # Determine whether each reference in the having clause is to a column or an alias.
+    for having in scope.find_all(exp.Having):
+        for column in having.find_all(exp.Column):
+            if (
+                not column.table
+                and column.find_ancestor(exp.AggFunc)
+                and column.name in resolver.all_columns
+            ):
+                columns_missing_from_scope.append(column)
 
-            column_table = resolver.get_table(column_name)
+    for column in columns_missing_from_scope:
+        column_table = resolver.get_table(column.name)
 
-            if column_table is None:
-                raise OptimizeError(f"Ambiguous column: {column_name}")
+        if column_table is None:
+            raise OptimizeError(f"Ambiguous column: {column.name}")
 
-            column.set("table", exp.to_identifier(column_table))
+        column.set("table", exp.to_identifier(column_table))
 
 
 def _expand_stars(scope, resolver):
@@ -290,7 +303,9 @@ def _qualify_outputs(scope):
     """Ensure all output columns are aliased"""
     new_selections = []
 
-    for i, (selection, aliased_column) in enumerate(itertools.zip_longest(scope.selects, scope.outer_column_list)):
+    for i, (selection, aliased_column) in enumerate(
+        itertools.zip_longest(scope.selects, scope.outer_column_list)
+    ):
         if isinstance(selection, exp.Column):
             # convoluted setter because a simple selection.replace(alias) would require a copy
             alias_ = alias(exp.column(""), alias=selection.name)
@@ -338,14 +353,18 @@ class _Resolver:
             (str) table name
         """
         if self._unambiguous_columns is None:
-            self._unambiguous_columns = self._get_unambiguous_columns(self._get_all_source_columns())
+            self._unambiguous_columns = self._get_unambiguous_columns(
+                self._get_all_source_columns()
+            )
         return self._unambiguous_columns.get(column_name)
 
     @property
     def all_columns(self):
         """All available columns of all sources in this scope"""
         if self._all_columns is None:
-            self._all_columns = set(column for columns in self._get_all_source_columns().values() for column in columns)
+            self._all_columns = set(
+                column for columns in self._get_all_source_columns().values() for column in columns
+            )
         return self._all_columns
 
     def get_source_columns(self, name, only_visible=False):
@@ -372,7 +391,9 @@ class _Resolver:
 
     def _get_all_source_columns(self):
         if self._source_columns is None:
-            self._source_columns = {k: self.get_source_columns(k) for k in self.scope.selected_sources}
+            self._source_columns = {
+                k: self.get_source_columns(k) for k in self.scope.selected_sources
+            }
         return self._source_columns
 
     def _get_unambiguous_columns(self, source_columns):

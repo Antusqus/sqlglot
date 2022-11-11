@@ -293,6 +293,18 @@ class TestSnowflake(Validator):
             "CREATE TABLE a (x DATE, y BIGINT) WITH (PARTITION BY (x), integration='q', auto_refresh=TRUE, file_format=(type = parquet))"
         )
         self.validate_identity("CREATE MATERIALIZED VIEW a COMMENT='...' AS SELECT 1 FROM x")
+        self.validate_all(
+            "CREATE OR REPLACE TRANSIENT TABLE a (id INT)",
+            read={
+                "postgres": "CREATE OR REPLACE TRANSIENT TABLE a (id INT)",
+                "snowflake": "CREATE OR REPLACE TRANSIENT TABLE a (id INT)",
+            },
+            write={
+                "postgres": "CREATE OR REPLACE TABLE a (id INT)",
+                "mysql": "CREATE OR REPLACE TABLE a (id INT)",
+                "snowflake": "CREATE OR REPLACE TRANSIENT TABLE a (id INT)",
+            },
+        )
 
     def test_user_defined_functions(self):
         self.validate_all(
@@ -324,7 +336,8 @@ class TestSnowflake(Validator):
     def test_table_literal(self):
         # All examples from https://docs.snowflake.com/en/sql-reference/literals-table.html
         self.validate_all(
-            r"""SELECT * FROM TABLE('MYTABLE')""", write={"snowflake": r"""SELECT * FROM TABLE('MYTABLE')"""}
+            r"""SELECT * FROM TABLE('MYTABLE')""",
+            write={"snowflake": r"""SELECT * FROM TABLE('MYTABLE')"""},
         )
 
         self.validate_all(
@@ -340,15 +353,123 @@ class TestSnowflake(Validator):
             write={"snowflake": r"""SELECT * FROM TABLE('MYDB. "MYSCHEMA"."MYTABLE"')"""},
         )
 
-        self.validate_all(r"""SELECT * FROM TABLE($MYVAR)""", write={"snowflake": r"""SELECT * FROM TABLE($MYVAR)"""})
-
-        self.validate_all(r"""SELECT * FROM TABLE(?)""", write={"snowflake": r"""SELECT * FROM TABLE(?)"""})
+        self.validate_all(
+            r"""SELECT * FROM TABLE($MYVAR)""",
+            write={"snowflake": r"""SELECT * FROM TABLE($MYVAR)"""},
+        )
 
         self.validate_all(
-            r"""SELECT * FROM TABLE(:BINDING)""", write={"snowflake": r"""SELECT * FROM TABLE(:BINDING)"""}
+            r"""SELECT * FROM TABLE(?)""", write={"snowflake": r"""SELECT * FROM TABLE(?)"""}
+        )
+
+        self.validate_all(
+            r"""SELECT * FROM TABLE(:BINDING)""",
+            write={"snowflake": r"""SELECT * FROM TABLE(:BINDING)"""},
         )
 
         self.validate_all(
             r"""SELECT * FROM TABLE($MYVAR) WHERE COL1 = 10""",
             write={"snowflake": r"""SELECT * FROM TABLE($MYVAR) WHERE COL1 = 10"""},
+        )
+
+    def test_flatten(self):
+        self.validate_all(
+            """
+            select
+              dag_report.acct_id,
+              dag_report.report_date,
+              dag_report.report_uuid,
+              dag_report.airflow_name,
+              dag_report.dag_id,
+              f.value::varchar as operator
+            from cs.telescope.dag_report,
+            table(flatten(input=>split(operators, ','))) f
+            """,
+            write={
+                "snowflake": """SELECT
+  dag_report.acct_id,
+  dag_report.report_date,
+  dag_report.report_uuid,
+  dag_report.airflow_name,
+  dag_report.dag_id,
+  CAST(f.value AS VARCHAR) AS operator
+FROM cs.telescope.dag_report, TABLE(FLATTEN(input => SPLIT(operators, ','))) AS f"""
+            },
+            pretty=True,
+        )
+
+        # All examples from https://docs.snowflake.com/en/sql-reference/functions/flatten.html#syntax
+        self.validate_all(
+            "SELECT * FROM TABLE(FLATTEN(input => parse_json('[1, ,77]'))) f",
+            write={
+                "snowflake": "SELECT * FROM TABLE(FLATTEN(input => PARSE_JSON('[1, ,77]'))) AS f"
+            },
+        )
+
+        self.validate_all(
+            """SELECT * FROM TABLE(FLATTEN(input => parse_json('{"a":1, "b":[77,88]}'), outer => true)) f""",
+            write={
+                "snowflake": """SELECT * FROM TABLE(FLATTEN(input => PARSE_JSON('{"a":1, "b":[77,88]}'), outer => TRUE)) AS f"""
+            },
+        )
+
+        self.validate_all(
+            """SELECT * FROM TABLE(FLATTEN(input => parse_json('{"a":1, "b":[77,88]}'), path => 'b')) f""",
+            write={
+                "snowflake": """SELECT * FROM TABLE(FLATTEN(input => PARSE_JSON('{"a":1, "b":[77,88]}'), path => 'b')) AS f"""
+            },
+        )
+
+        self.validate_all(
+            """SELECT * FROM TABLE(FLATTEN(input => parse_json('[]'))) f""",
+            write={"snowflake": """SELECT * FROM TABLE(FLATTEN(input => PARSE_JSON('[]'))) AS f"""},
+        )
+
+        self.validate_all(
+            """SELECT * FROM TABLE(FLATTEN(input => parse_json('[]'), outer => true)) f""",
+            write={
+                "snowflake": """SELECT * FROM TABLE(FLATTEN(input => PARSE_JSON('[]'), outer => TRUE)) AS f"""
+            },
+        )
+
+        self.validate_all(
+            """SELECT * FROM TABLE(FLATTEN(input => parse_json('{"a":1, "b":[77,88], "c": {"d":"X"}}'))) f""",
+            write={
+                "snowflake": """SELECT * FROM TABLE(FLATTEN(input => PARSE_JSON('{"a":1, "b":[77,88], "c": {"d":"X"}}'))) AS f"""
+            },
+        )
+
+        self.validate_all(
+            """SELECT * FROM TABLE(FLATTEN(input => parse_json('{"a":1, "b":[77,88], "c": {"d":"X"}}'), recursive => true)) f""",
+            write={
+                "snowflake": """SELECT * FROM TABLE(FLATTEN(input => PARSE_JSON('{"a":1, "b":[77,88], "c": {"d":"X"}}'), recursive => TRUE)) AS f"""
+            },
+        )
+
+        self.validate_all(
+            """SELECT * FROM TABLE(FLATTEN(input => parse_json('{"a":1, "b":[77,88], "c": {"d":"X"}}'), recursive => true, mode => 'object')) f""",
+            write={
+                "snowflake": """SELECT * FROM TABLE(FLATTEN(input => PARSE_JSON('{"a":1, "b":[77,88], "c": {"d":"X"}}'), recursive => TRUE, mode => 'object')) AS f"""
+            },
+        )
+
+        self.validate_all(
+            """
+            SELECT id as "ID",
+              f.value AS "Contact",
+              f1.value:type AS "Type",
+              f1.value:content AS "Details"
+            FROM persons p,
+              lateral flatten(input => p.c, path => 'contact') f,
+              lateral flatten(input => f.value:business) f1
+            """,
+            write={
+                "snowflake": """SELECT
+  id AS "ID",
+  f.value AS "Contact",
+  f1.value['type'] AS "Type",
+  f1.value['content'] AS "Details"
+FROM persons AS p, LATERAL FLATTEN(input => p.c, path => 'contact') f, LATERAL FLATTEN(input => f.value['business']) f1""",
+            },
+            pretty=True,
         )

@@ -1,4 +1,6 @@
-from sqlglot import exp
+from __future__ import annotations
+
+from sqlglot import exp, generator, parser, tokens
 from sqlglot.dialects.dialect import (
     Dialect,
     arrow_json_extract_scalar_sql,
@@ -9,9 +11,7 @@ from sqlglot.dialects.dialect import (
     no_trycast_sql,
     str_position_sql,
 )
-from sqlglot.generator import Generator
-from sqlglot.parser import Parser
-from sqlglot.tokens import Tokenizer, TokenType
+from sqlglot.tokens import TokenType
 from sqlglot.transforms import delegate, preprocess
 
 
@@ -160,15 +160,38 @@ class Postgres(Dialect):
         "YYYY": "%Y",  # 2015
     }
 
-    class Tokenizer(Tokenizer):
+    class Tokenizer(tokens.Tokenizer):
         BIT_STRINGS = [("b'", "'"), ("B'", "'")]
         HEX_STRINGS = [("x'", "'"), ("X'", "'")]
         BYTE_STRINGS = [("e'", "'"), ("E'", "'")]
+
+        CREATABLES = (
+            "AGGREGATE",
+            "CAST",
+            "CONVERSION",
+            "COLLATION",
+            "DEFAULT CONVERSION",
+            "CONSTRAINT",
+            "DOMAIN",
+            "EXTENSION",
+            "FOREIGN",
+            "FUNCTION",
+            "OPERATOR",
+            "POLICY",
+            "ROLE",
+            "RULE",
+            "SEQUENCE",
+            "TEXT",
+            "TRIGGER",
+            "TYPE",
+            "UNLOGGED",
+            "USER",
+        )
+
         KEYWORDS = {
-            **Tokenizer.KEYWORDS,
+            **tokens.Tokenizer.KEYWORDS,
             "ALWAYS": TokenType.ALWAYS,
             "BY DEFAULT": TokenType.BY_DEFAULT,
-            "COMMENT ON": TokenType.COMMENT_ON,
             "IDENTITY": TokenType.IDENTITY,
             "GENERATED": TokenType.GENERATED,
             "DOUBLE PRECISION": TokenType.DOUBLE,
@@ -176,34 +199,48 @@ class Postgres(Dialect):
             "SERIAL": TokenType.SERIAL,
             "SMALLSERIAL": TokenType.SMALLSERIAL,
             "UUID": TokenType.UUID,
+            "TEMP": TokenType.TEMPORARY,
+            "BEGIN TRANSACTION": TokenType.BEGIN,
+            "BEGIN": TokenType.COMMAND,
+            "COMMENT ON": TokenType.COMMAND,
+            "DECLARE": TokenType.COMMAND,
+            "DO": TokenType.COMMAND,
+            "REFRESH": TokenType.COMMAND,
+            "REINDEX": TokenType.COMMAND,
+            "RESET": TokenType.COMMAND,
+            "REVOKE": TokenType.COMMAND,
+            "GRANT": TokenType.COMMAND,
+            **{f"CREATE {kind}": TokenType.COMMAND for kind in CREATABLES},
+            **{f"DROP {kind}": TokenType.COMMAND for kind in CREATABLES},
         }
         QUOTES = ["'", "$$"]
         SINGLE_TOKENS = {
-            **Tokenizer.SINGLE_TOKENS,
+            **tokens.Tokenizer.SINGLE_TOKENS,
             "$": TokenType.PARAMETER,
         }
 
-    class Parser(Parser):
+    class Parser(parser.Parser):
         STRICT_CAST = False
 
         FUNCTIONS = {
-            **Parser.FUNCTIONS,
+            **parser.Parser.FUNCTIONS,
             "TO_TIMESTAMP": _to_timestamp,
             "TO_CHAR": format_time_lambda(exp.TimeToStr, "postgres"),
         }
 
-    class Generator(Generator):
+    class Generator(generator.Generator):
         TYPE_MAPPING = {
-            **Generator.TYPE_MAPPING,
+            **generator.Generator.TYPE_MAPPING,
             exp.DataType.Type.TINYINT: "SMALLINT",
             exp.DataType.Type.FLOAT: "REAL",
             exp.DataType.Type.DOUBLE: "DOUBLE PRECISION",
             exp.DataType.Type.BINARY: "BYTEA",
+            exp.DataType.Type.VARBINARY: "BYTEA",
             exp.DataType.Type.DATETIME: "TIMESTAMP",
         }
 
         TRANSFORMS = {
-            **Generator.TRANSFORMS,
+            **generator.Generator.TRANSFORMS,
             exp.ColumnDef: preprocess(
                 [
                     _auto_increment_to_serial,

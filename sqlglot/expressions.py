@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import datetime
 import numbers
 import re
+import typing as t
 from collections import deque
 from copy import deepcopy
 from enum import auto
@@ -9,11 +12,14 @@ from sqlglot.errors import ParseError
 from sqlglot.helper import (
     AutoName,
     camel_to_snake_case,
-    ensure_list,
-    list_get,
+    ensure_collection,
+    seq_get,
     split_num_words,
     subclasses,
 )
+
+if t.TYPE_CHECKING:
+    from sqlglot.dialects.dialect import Dialect
 
 
 class _Expression(type):
@@ -35,27 +41,30 @@ class Expression(metaclass=_Expression):
             or optional (False).
     """
 
-    key = None
+    key = "Expression"
     arg_types = {"this": True}
-    __slots__ = ("args", "parent", "arg_key", "type")
+    __slots__ = ("args", "parent", "arg_key", "type", "comment")
 
     def __init__(self, **args):
         self.args = args
         self.parent = None
         self.arg_key = None
         self.type = None
+        self.comment = None
 
         for arg_key, value in self.args.items():
             self._set_parent(arg_key, value)
 
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         return type(self) is type(other) and _norm_args(self) == _norm_args(other)
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(
             (
                 self.key,
-                tuple((k, tuple(v) if isinstance(v, list) else v) for k, v in _norm_args(self).items()),
+                tuple(
+                    (k, tuple(v) if isinstance(v, list) else v) for k, v in _norm_args(self).items()
+                ),
             )
         )
 
@@ -78,6 +87,19 @@ class Expression(metaclass=_Expression):
         if isinstance(field, (Identifier, Literal, Var)):
             return field.this
         return ""
+
+    def find_comment(self, key: str) -> str:
+        """
+        Finds the comment that is attached to a specified child node.
+
+        Args:
+            key: the key of the target child node (e.g. "this", "expression", etc).
+
+        Returns:
+            The comment attached to the child node, or the empty string, if it doesn't exist.
+        """
+        field = self.args.get(key)
+        return field.comment if isinstance(field, Expression) else ""
 
     @property
     def is_string(self):
@@ -114,7 +136,10 @@ class Expression(metaclass=_Expression):
         return self.alias or self.name
 
     def __deepcopy__(self, memo):
-        return self.__class__(**deepcopy(self.args))
+        copy = self.__class__(**deepcopy(self.args))
+        copy.comment = self.comment
+        copy.type = self.type
+        return copy
 
     def copy(self):
         new = deepcopy(self)
@@ -249,9 +274,7 @@ class Expression(metaclass=_Expression):
             return
 
         for k, v in self.args.items():
-            nodes = ensure_list(v)
-
-            for node in nodes:
+            for node in ensure_collection(v):
                 if isinstance(node, Expression):
                     yield from node.dfs(self, k, prune)
 
@@ -274,9 +297,7 @@ class Expression(metaclass=_Expression):
 
             if isinstance(item, Expression):
                 for k, v in item.args.items():
-                    nodes = ensure_list(v)
-
-                    for node in nodes:
+                    for node in ensure_collection(v):
                         if isinstance(node, Expression):
                             queue.append((node, item, k))
 
@@ -319,7 +340,7 @@ class Expression(metaclass=_Expression):
     def __repr__(self):
         return self.to_s()
 
-    def sql(self, dialect=None, **opts):
+    def sql(self, dialect: Dialect | str | None = None, **opts) -> str:
         """
         Returns SQL string representation of this tree.
 
@@ -335,7 +356,7 @@ class Expression(metaclass=_Expression):
 
         return Dialect.get_or_raise(dialect)().generate(self, **opts)
 
-    def to_s(self, hide_missing=True, level=0):
+    def to_s(self, hide_missing: bool = True, level: int = 0) -> str:
         indent = "" if not level else "\n"
         indent += "".join(["  "] * level)
         left = f"({self.key.upper()} "
@@ -343,11 +364,13 @@ class Expression(metaclass=_Expression):
         args = {
             k: ", ".join(
                 v.to_s(hide_missing=hide_missing, level=level + 1) if hasattr(v, "to_s") else str(v)
-                for v in ensure_list(vs)
+                for v in ensure_collection(vs)
                 if v is not None
             )
             for k, vs in self.args.items()
         }
+        args["comment"] = self.comment
+        args["type"] = self.type
         args = {k: v for k, v in args.items() if v or not hide_missing}
 
         right = ", ".join(f"{k}: {v}" for k, v in args.items())
@@ -443,7 +466,7 @@ class Condition(Expression):
             'x = 1 AND y = 1'
 
         Args:
-            *expressions (str or Expression): the SQL code strings to parse.
+            *expressions (str | Expression): the SQL code strings to parse.
                 If an `Expression` instance is passed, it will be used as-is.
             dialect (str): the dialect used to parse the input expression.
             opts (kwargs): other options to use to parse the input expressions.
@@ -462,7 +485,7 @@ class Condition(Expression):
             'x = 1 OR y = 1'
 
         Args:
-            *expressions (str or Expression): the SQL code strings to parse.
+            *expressions (str | Expression): the SQL code strings to parse.
                 If an `Expression` instance is passed, it will be used as-is.
             dialect (str): the dialect used to parse the input expression.
             opts (kwargs): other options to use to parse the input expressions.
@@ -523,7 +546,7 @@ class Unionable(Expression):
             'SELECT * FROM foo UNION SELECT * FROM bla'
 
         Args:
-            expression (str or Expression): the SQL code string.
+            expression (str | Expression): the SQL code string.
                 If an `Expression` instance is passed, it will be used as-is.
             distinct (bool): set the DISTINCT flag if and only if this is true.
             dialect (str): the dialect used to parse the input expression.
@@ -543,7 +566,7 @@ class Unionable(Expression):
             'SELECT * FROM foo INTERSECT SELECT * FROM bla'
 
         Args:
-            expression (str or Expression): the SQL code string.
+            expression (str | Expression): the SQL code string.
                 If an `Expression` instance is passed, it will be used as-is.
             distinct (bool): set the DISTINCT flag if and only if this is true.
             dialect (str): the dialect used to parse the input expression.
@@ -563,7 +586,7 @@ class Unionable(Expression):
             'SELECT * FROM foo EXCEPT SELECT * FROM bla'
 
         Args:
-            expression (str or Expression): the SQL code string.
+            expression (str | Expression): the SQL code string.
                 If an `Expression` instance is passed, it will be used as-is.
             distinct (bool): set the DISTINCT flag if and only if this is true.
             dialect (str): the dialect used to parse the input expression.
@@ -576,17 +599,6 @@ class Unionable(Expression):
 
 class UDTF(DerivedTable, Unionable):
     pass
-
-
-class Annotation(Expression):
-    arg_types = {
-        "this": True,
-        "expression": True,
-    }
-
-    @property
-    def alias(self):
-        return self.expression.alias_or_name
 
 
 class Cache(Expression):
@@ -612,6 +624,7 @@ class Create(Expression):
         "exists": False,
         "properties": False,
         "temporary": False,
+        "transient": False,
         "replace": False,
         "unique": False,
         "materialized": False,
@@ -620,6 +633,38 @@ class Create(Expression):
 
 class Describe(Expression):
     pass
+
+
+class Set(Expression):
+    arg_types = {"expressions": True}
+
+
+class SetItem(Expression):
+    arg_types = {
+        "this": True,
+        "kind": False,
+        "collate": False,  # MySQL SET NAMES statement
+    }
+
+
+class Show(Expression):
+    arg_types = {
+        "this": True,
+        "target": False,
+        "offset": False,
+        "limit": False,
+        "like": False,
+        "where": False,
+        "db": False,
+        "full": False,
+        "mutex": False,
+        "query": False,
+        "channel": False,
+        "global": False,
+        "log": False,
+        "position": False,
+        "types": False,
+    }
 
 
 class UserDefinedFunction(Expression):
@@ -742,6 +787,7 @@ class Drop(Expression):
         "exists": False,
         "temporary": False,
         "materialized": False,
+        "cascade": False,
     }
 
 
@@ -863,18 +909,20 @@ class Literal(Condition):
 
     def __eq__(self, other):
         return (
-            isinstance(other, Literal) and self.this == other.this and self.args["is_string"] == other.args["is_string"]
+            isinstance(other, Literal)
+            and self.this == other.this
+            and self.args["is_string"] == other.args["is_string"]
         )
 
     def __hash__(self):
         return hash((self.key, self.this, self.args["is_string"]))
 
     @classmethod
-    def number(cls, number):
+    def number(cls, number) -> Literal:
         return cls(this=str(number), is_string=False)
 
     @classmethod
-    def string(cls, string):
+    def string(cls, string) -> Literal:
         return cls(this=str(string), is_string=True)
 
 
@@ -910,7 +958,7 @@ class Join(Expression):
             'JOIN x ON y = 1'
 
         Args:
-            *expressions (str or Expression): the SQL code strings to parse.
+            *expressions (str | Expression): the SQL code strings to parse.
                 If an `Expression` instance is passed, it will be used as-is.
                 Multiple expressions are combined with an AND operator.
             append (bool): if `True`, AND the new expressions to any existing expression.
@@ -937,9 +985,45 @@ class Join(Expression):
 
         return join
 
+    def using(self, *expressions, append=True, dialect=None, copy=True, **opts):
+        """
+        Append to or set the USING expressions.
+
+        Example:
+            >>> import sqlglot
+            >>> sqlglot.parse_one("JOIN x", into=Join).using("foo", "bla").sql()
+            'JOIN x USING (foo, bla)'
+
+        Args:
+            *expressions (str | Expression): the SQL code strings to parse.
+                If an `Expression` instance is passed, it will be used as-is.
+            append (bool): if `True`, concatenate the new expressions to the existing "using" list.
+                Otherwise, this resets the expression.
+            dialect (str): the dialect used to parse the input expressions.
+            copy (bool): if `False`, modify this expression instance in-place.
+            opts (kwargs): other options to use to parse the input expressions.
+
+        Returns:
+            Join: the modified join expression.
+        """
+        join = _apply_list_builder(
+            *expressions,
+            instance=self,
+            arg="using",
+            append=append,
+            dialect=dialect,
+            copy=copy,
+            **opts,
+        )
+
+        if join.kind == "CROSS":
+            join.set("kind", None)
+
+        return join
+
 
 class Lateral(UDTF):
-    arg_types = {"this": True, "outer": False, "alias": False}
+    arg_types = {"this": True, "view": False, "outer": False, "alias": False}
 
 
 # Clickhouse FROM FINAL modifier
@@ -1050,7 +1134,7 @@ class Properties(Expression):
     }
 
     @classmethod
-    def from_dict(cls, properties_dict):
+    def from_dict(cls, properties_dict) -> Properties:
         expressions = []
         for key, value in properties_dict.items():
             property_cls = cls.PROPERTY_KEY_MAPPING.get(key.upper(), AnonymousProperty)
@@ -1093,7 +1177,7 @@ class Subqueryable(Unionable):
             'SELECT x FROM (SELECT x FROM tbl)'
 
         Args:
-            alias (str or Identifier): an optional alias for the subquery
+            alias (str | Identifier): an optional alias for the subquery
             copy (bool): if `False`, modify this expression instance in-place.
 
         Returns:
@@ -1138,9 +1222,9 @@ class Subqueryable(Unionable):
             'WITH tbl2 AS (SELECT * FROM tbl) SELECT x FROM tbl2'
 
         Args:
-            alias (str or Expression): the SQL code string to parse as the table name.
+            alias (str | Expression): the SQL code string to parse as the table name.
                 If an `Expression` instance is passed, this is used as-is.
-            as_ (str or Expression): the SQL code string to parse as the table expression.
+            as_ (str | Expression): the SQL code string to parse as the table expression.
                 If an `Expression` instance is passed, it will be used as-is.
             recursive (bool): set the RECURSIVE part of the expression. Defaults to `False`.
             append (bool): if `True`, add to any existing expressions.
@@ -1273,7 +1357,7 @@ class Var(Expression):
 
 
 class Schema(Expression):
-    arg_types = {"this": False, "expressions": True}
+    arg_types = {"this": False, "expressions": False}
 
 
 class Select(Subqueryable):
@@ -1286,7 +1370,7 @@ class Select(Subqueryable):
         **QUERY_MODIFIERS,
     }
 
-    def from_(self, *expressions, append=True, dialect=None, copy=True, **opts):
+    def from_(self, *expressions, append=True, dialect=None, copy=True, **opts) -> Select:
         """
         Set the FROM expression.
 
@@ -1295,7 +1379,7 @@ class Select(Subqueryable):
             'SELECT x FROM tbl'
 
         Args:
-            *expressions (str or Expression): the SQL code strings to parse.
+            *expressions (str | Expression): the SQL code strings to parse.
                 If a `From` instance is passed, this is used as-is.
                 If another `Expression` instance is passed, it will be wrapped in a `From`.
             append (bool): if `True`, add to any existing expressions.
@@ -1319,7 +1403,7 @@ class Select(Subqueryable):
             **opts,
         )
 
-    def group_by(self, *expressions, append=True, dialect=None, copy=True, **opts):
+    def group_by(self, *expressions, append=True, dialect=None, copy=True, **opts) -> Select:
         """
         Set the GROUP BY expression.
 
@@ -1328,7 +1412,7 @@ class Select(Subqueryable):
             'SELECT x, COUNT(1) FROM tbl GROUP BY x'
 
         Args:
-            *expressions (str or Expression): the SQL code strings to parse.
+            *expressions (str | Expression): the SQL code strings to parse.
                 If a `Group` instance is passed, this is used as-is.
                 If another `Expression` instance is passed, it will be wrapped in a `Group`.
                 If nothing is passed in then a group by is not applied to the expression
@@ -1355,7 +1439,7 @@ class Select(Subqueryable):
             **opts,
         )
 
-    def order_by(self, *expressions, append=True, dialect=None, copy=True, **opts):
+    def order_by(self, *expressions, append=True, dialect=None, copy=True, **opts) -> Select:
         """
         Set the ORDER BY expression.
 
@@ -1364,7 +1448,7 @@ class Select(Subqueryable):
             'SELECT x FROM tbl ORDER BY x DESC'
 
         Args:
-            *expressions (str or Expression): the SQL code strings to parse.
+            *expressions (str | Expression): the SQL code strings to parse.
                 If a `Group` instance is passed, this is used as-is.
                 If another `Expression` instance is passed, it will be wrapped in a `Order`.
             append (bool): if `True`, add to any existing expressions.
@@ -1388,7 +1472,7 @@ class Select(Subqueryable):
             **opts,
         )
 
-    def sort_by(self, *expressions, append=True, dialect=None, copy=True, **opts):
+    def sort_by(self, *expressions, append=True, dialect=None, copy=True, **opts) -> Select:
         """
         Set the SORT BY expression.
 
@@ -1397,7 +1481,7 @@ class Select(Subqueryable):
             'SELECT x FROM tbl SORT BY x DESC'
 
         Args:
-            *expressions (str or Expression): the SQL code strings to parse.
+            *expressions (str | Expression): the SQL code strings to parse.
                 If a `Group` instance is passed, this is used as-is.
                 If another `Expression` instance is passed, it will be wrapped in a `SORT`.
             append (bool): if `True`, add to any existing expressions.
@@ -1421,7 +1505,7 @@ class Select(Subqueryable):
             **opts,
         )
 
-    def cluster_by(self, *expressions, append=True, dialect=None, copy=True, **opts):
+    def cluster_by(self, *expressions, append=True, dialect=None, copy=True, **opts) -> Select:
         """
         Set the CLUSTER BY expression.
 
@@ -1430,7 +1514,7 @@ class Select(Subqueryable):
             'SELECT x FROM tbl CLUSTER BY x DESC'
 
         Args:
-            *expressions (str or Expression): the SQL code strings to parse.
+            *expressions (str | Expression): the SQL code strings to parse.
                 If a `Group` instance is passed, this is used as-is.
                 If another `Expression` instance is passed, it will be wrapped in a `Cluster`.
             append (bool): if `True`, add to any existing expressions.
@@ -1454,7 +1538,7 @@ class Select(Subqueryable):
             **opts,
         )
 
-    def limit(self, expression, dialect=None, copy=True, **opts):
+    def limit(self, expression, dialect=None, copy=True, **opts) -> Select:
         """
         Set the LIMIT expression.
 
@@ -1463,7 +1547,7 @@ class Select(Subqueryable):
             'SELECT x FROM tbl LIMIT 10'
 
         Args:
-            expression (str or int or Expression): the SQL code string to parse.
+            expression (str | int | Expression): the SQL code string to parse.
                 This can also be an integer.
                 If a `Limit` instance is passed, this is used as-is.
                 If another `Expression` instance is passed, it will be wrapped in a `Limit`.
@@ -1485,7 +1569,7 @@ class Select(Subqueryable):
             **opts,
         )
 
-    def offset(self, expression, dialect=None, copy=True, **opts):
+    def offset(self, expression, dialect=None, copy=True, **opts) -> Select:
         """
         Set the OFFSET expression.
 
@@ -1494,7 +1578,7 @@ class Select(Subqueryable):
             'SELECT x FROM tbl OFFSET 10'
 
         Args:
-            expression (str or int or Expression): the SQL code string to parse.
+            expression (str | int | Expression): the SQL code string to parse.
                 This can also be an integer.
                 If a `Offset` instance is passed, this is used as-is.
                 If another `Expression` instance is passed, it will be wrapped in a `Offset`.
@@ -1516,7 +1600,7 @@ class Select(Subqueryable):
             **opts,
         )
 
-    def select(self, *expressions, append=True, dialect=None, copy=True, **opts):
+    def select(self, *expressions, append=True, dialect=None, copy=True, **opts) -> Select:
         """
         Append to or set the SELECT expressions.
 
@@ -1525,7 +1609,7 @@ class Select(Subqueryable):
             'SELECT x, y'
 
         Args:
-            *expressions (str or Expression): the SQL code strings to parse.
+            *expressions (str | Expression): the SQL code strings to parse.
                 If an `Expression` instance is passed, it will be used as-is.
             append (bool): if `True`, add to any existing expressions.
                 Otherwise, this resets the expressions.
@@ -1546,7 +1630,7 @@ class Select(Subqueryable):
             **opts,
         )
 
-    def lateral(self, *expressions, append=True, dialect=None, copy=True, **opts):
+    def lateral(self, *expressions, append=True, dialect=None, copy=True, **opts) -> Select:
         """
         Append to or set the LATERAL expressions.
 
@@ -1555,7 +1639,7 @@ class Select(Subqueryable):
             'SELECT x FROM tbl LATERAL VIEW OUTER EXPLODE(y) tbl2 AS z'
 
         Args:
-            *expressions (str or Expression): the SQL code strings to parse.
+            *expressions (str | Expression): the SQL code strings to parse.
                 If an `Expression` instance is passed, it will be used as-is.
             append (bool): if `True`, add to any existing expressions.
                 Otherwise, this resets the expressions.
@@ -1582,13 +1666,14 @@ class Select(Subqueryable):
         self,
         expression,
         on=None,
+        using=None,
         append=True,
         join_type=None,
         join_alias=None,
         dialect=None,
         copy=True,
         **opts,
-    ):
+    ) -> Select:
         """
         Append to or set the JOIN expressions.
 
@@ -1596,15 +1681,20 @@ class Select(Subqueryable):
             >>> Select().select("*").from_("tbl").join("tbl2", on="tbl1.y = tbl2.y").sql()
             'SELECT * FROM tbl JOIN tbl2 ON tbl1.y = tbl2.y'
 
+            >>> Select().select("1").from_("a").join("b", using=["x", "y", "z"]).sql()
+            'SELECT 1 FROM a JOIN b USING (x, y, z)'
+
             Use `join_type` to change the type of join:
 
             >>> Select().select("*").from_("tbl").join("tbl2", on="tbl1.y = tbl2.y", join_type="left outer").sql()
             'SELECT * FROM tbl LEFT OUTER JOIN tbl2 ON tbl1.y = tbl2.y'
 
         Args:
-            expression (str or Expression): the SQL code string to parse.
+            expression (str | Expression): the SQL code string to parse.
                 If an `Expression` instance is passed, it will be used as-is.
-            on (str or Expression): optionally specify the join criteria as a SQL string.
+            on (str | Expression): optionally specify the join "on" criteria as a SQL string.
+                If an `Expression` instance is passed, it will be used as-is.
+            using (str | Expression): optionally specify the join "using" criteria as a SQL string.
                 If an `Expression` instance is passed, it will be used as-is.
             append (bool): if `True`, add to any existing expressions.
                 Otherwise, this resets the expressions.
@@ -1629,7 +1719,7 @@ class Select(Subqueryable):
             join.this.replace(join.this.subquery())
 
         if join_type:
-            natural, side, kind = maybe_parse(join_type, into="JOIN_TYPE", **parse_args)
+            natural, side, kind = maybe_parse(join_type, into="JOIN_TYPE", **parse_args)  # type: ignore
             if natural:
                 join.set("natural", True)
             if side:
@@ -1638,8 +1728,18 @@ class Select(Subqueryable):
                 join.set("kind", kind.text)
 
         if on:
-            on = and_(*ensure_list(on), dialect=dialect, **opts)
+            on = and_(*ensure_collection(on), dialect=dialect, **opts)
             join.set("on", on)
+
+        if using:
+            join = _apply_list_builder(
+                *ensure_collection(using),
+                instance=join,
+                arg="using",
+                append=append,
+                copy=copy,
+                **opts,
+            )
 
         if join_alias:
             join.set("this", alias_(join.args["this"], join_alias, table=True))
@@ -1652,7 +1752,7 @@ class Select(Subqueryable):
             **opts,
         )
 
-    def where(self, *expressions, append=True, dialect=None, copy=True, **opts):
+    def where(self, *expressions, append=True, dialect=None, copy=True, **opts) -> Select:
         """
         Append to or set the WHERE expressions.
 
@@ -1661,7 +1761,7 @@ class Select(Subqueryable):
             "SELECT x FROM tbl WHERE x = 'a' OR x < 'b'"
 
         Args:
-            *expressions (str or Expression): the SQL code strings to parse.
+            *expressions (str | Expression): the SQL code strings to parse.
                 If an `Expression` instance is passed, it will be used as-is.
                 Multiple expressions are combined with an AND operator.
             append (bool): if `True`, AND the new expressions to any existing expression.
@@ -1684,7 +1784,7 @@ class Select(Subqueryable):
             **opts,
         )
 
-    def having(self, *expressions, append=True, dialect=None, copy=True, **opts):
+    def having(self, *expressions, append=True, dialect=None, copy=True, **opts) -> Select:
         """
         Append to or set the HAVING expressions.
 
@@ -1693,7 +1793,7 @@ class Select(Subqueryable):
             'SELECT x, COUNT(y) FROM tbl GROUP BY x HAVING COUNT(y) > 3'
 
         Args:
-            *expressions (str or Expression): the SQL code strings to parse.
+            *expressions (str | Expression): the SQL code strings to parse.
                 If an `Expression` instance is passed, it will be used as-is.
                 Multiple expressions are combined with an AND operator.
             append (bool): if `True`, AND the new expressions to any existing expression.
@@ -1716,7 +1816,7 @@ class Select(Subqueryable):
             **opts,
         )
 
-    def distinct(self, distinct=True, copy=True):
+    def distinct(self, distinct=True, copy=True) -> Select:
         """
         Set the OFFSET expression.
 
@@ -1735,7 +1835,7 @@ class Select(Subqueryable):
         instance.set("distinct", Distinct() if distinct else None)
         return instance
 
-    def ctas(self, table, properties=None, dialect=None, copy=True, **opts):
+    def ctas(self, table, properties=None, dialect=None, copy=True, **opts) -> Create:
         """
         Convert this expression to a CREATE TABLE AS statement.
 
@@ -1744,7 +1844,7 @@ class Select(Subqueryable):
             'CREATE TABLE x AS SELECT * FROM tbl'
 
         Args:
-            table (str or Expression): the SQL code string to parse as the table name.
+            table (str | Expression): the SQL code string to parse as the table name.
                 If another `Expression` instance is passed, it will be used as-is.
             properties (dict): an optional mapping of table properties
             dialect (str): the dialect used to parse the input table.
@@ -1773,11 +1873,11 @@ class Select(Subqueryable):
         )
 
     @property
-    def named_selects(self):
+    def named_selects(self) -> t.List[str]:
         return [e.alias_or_name for e in self.expressions if e.alias_or_name]
 
     @property
-    def selects(self):
+    def selects(self) -> t.List[Expression]:
         return self.expressions
 
 
@@ -1857,12 +1957,16 @@ class Parameter(Expression):
     pass
 
 
+class SessionParameter(Expression):
+    arg_types = {"this": True, "kind": False}
+
+
 class Placeholder(Expression):
     arg_types = {"this": False}
 
 
 class Null(Condition):
-    arg_types = {}
+    arg_types: t.Dict[str, t.Any] = {}
 
 
 class Boolean(Condition):
@@ -1883,6 +1987,7 @@ class DataType(Expression):
         NVARCHAR = auto()
         TEXT = auto()
         BINARY = auto()
+        VARBINARY = auto()
         INT = auto()
         TINYINT = auto()
         SMALLINT = auto()
@@ -1922,7 +2027,7 @@ class DataType(Expression):
         UNKNOWN = auto()  # Sentinel value, useful for type annotation
 
     @classmethod
-    def build(cls, dtype, **kwargs):
+    def build(cls, dtype, **kwargs) -> DataType:
         return DataType(
             this=dtype if isinstance(dtype, DataType.Type) else DataType.Type[dtype.upper()],
             **kwargs,
@@ -1950,16 +2055,25 @@ class Exists(SubqueryPredicate):
     pass
 
 
-# Commands to interact with the databases or engines
-# These expressions don't truly parse the expression and consume
-# whatever exists as a string until the end or a semicolon
+# Commands to interact with the databases or engines. For most of the command
+# expressions we parse whatever comes after the command's name as a string.
 class Command(Expression):
     arg_types = {"this": True, "expression": False}
 
 
-# Binary Expressions
-# (ADD a b)
-# (FROM table selects)
+class Transaction(Command):
+    arg_types = {"this": False, "modes": False}
+
+
+class Commit(Command):
+    arg_types = {}  # type: ignore
+
+
+class Rollback(Command):
+    arg_types = {"savepoint": False}
+
+
+# Binary expressions like (ADD a b)
 class Binary(Expression):
     arg_types = {"this": True, "expression": True}
 
@@ -2024,6 +2138,18 @@ class EQ(Binary, Predicate):
     pass
 
 
+class NullSafeEQ(Binary, Predicate):
+    pass
+
+
+class NullSafeNEQ(Binary, Predicate):
+    pass
+
+
+class Distance(Binary):
+    pass
+
+
 class Escape(Binary):
     pass
 
@@ -2048,15 +2174,11 @@ class Is(Binary, Predicate):
     pass
 
 
+class Kwarg(Binary):
+    """Kwarg in special functions like func(kwarg => y)."""
+
+
 class Like(Binary, Predicate):
-    pass
-
-
-class SimilarTo(Binary, Predicate):
-    pass
-
-
-class Distance(Binary):
     pass
 
 
@@ -2077,6 +2199,10 @@ class Mul(Binary):
 
 
 class NEQ(Binary, Predicate):
+    pass
+
+
+class SimilarTo(Binary, Predicate):
     pass
 
 
@@ -2136,7 +2262,13 @@ class Distinct(Expression):
 
 
 class In(Predicate):
-    arg_types = {"this": True, "expressions": False, "query": False, "unnest": False, "field": False}
+    arg_types = {
+        "this": True,
+        "expressions": False,
+        "query": False,
+        "unnest": False,
+        "field": False,
+    }
 
 
 class TimeUnit(Expression):
@@ -2202,7 +2334,9 @@ class Func(Condition):
     @classmethod
     def sql_names(cls):
         if cls is Func:
-            raise NotImplementedError("SQL name is only supported by concrete function implementations")
+            raise NotImplementedError(
+                "SQL name is only supported by concrete function implementations"
+            )
         if not hasattr(cls, "_sql_names"):
             cls._sql_names = [camel_to_snake_case(cls.__name__)]
         return cls._sql_names
@@ -2355,8 +2489,8 @@ class DateDiff(Func, TimeUnit):
     arg_types = {"this": True, "expression": True, "unit": False}
 
 
-class DateTrunc(Func, TimeUnit):
-    arg_types = {"this": True, "unit": True, "zone": False}
+class DateTrunc(Func):
+    arg_types = {"this": True, "expression": True, "zone": False}
 
 
 class DatetimeAdd(Func, TimeUnit):
@@ -2409,6 +2543,11 @@ class TimeDiff(Func, TimeUnit):
 
 class TimeTrunc(Func, TimeUnit):
     arg_types = {"this": True, "unit": True, "zone": False}
+
+
+class DateFromParts(Func):
+    _sql_names = ["DATEFROMPARTS"]
+    arg_types = {"year": True, "month": True, "day": True}
 
 
 class DateStrToDate(Func):
@@ -2554,7 +2693,7 @@ class Quantile(AggFunc):
 
 
 class ApproxQuantile(Quantile):
-    pass
+    arg_types = {"this": True, "quantile": True, "accuracy": False}
 
 
 class Reduce(Func):
@@ -2567,6 +2706,10 @@ class RegexpLike(Func):
 
 class RegexpSplit(Func):
     arg_types = {"this": True, "expression": True}
+
+
+class Repeat(Func):
+    arg_types = {"this": True, "times": True}
 
 
 class Round(Func):
@@ -2610,6 +2753,10 @@ class StrToTime(Func):
 
 
 class StrToUnix(Func):
+    arg_types = {"this": True, "format": True}
+
+
+class NumberToStr(Func):
     arg_types = {"this": True, "format": True}
 
 
@@ -2692,7 +2839,7 @@ class TsOrDiToDi(Func):
 
 
 class UnixToStr(Func):
-    arg_types = {"this": True, "format": True}
+    arg_types = {"this": True, "format": False}
 
 
 class UnixToTime(Func):
@@ -2727,6 +2874,10 @@ class Year(Func):
     pass
 
 
+class Use(Expression):
+    pass
+
+
 def _norm_args(expression):
     args = {}
 
@@ -2758,7 +2909,7 @@ def maybe_parse(
     dialect=None,
     prefix=None,
     **opts,
-):
+) -> t.Optional[Expression]:
     """Gracefully handle a possible string or expression.
 
     Example:
@@ -2768,7 +2919,7 @@ def maybe_parse(
         (IDENTIFIER this: x, quoted: False)
 
     Args:
-        sql_or_expression (str or Expression): the SQL code string or an expression
+        sql_or_expression (str | Expression): the SQL code string or an expression
         into (Expression): the SQLGlot Expression to parse into
         dialect (str): the dialect used to parse the input expressions (in the case that an
             input expression is a SQL string).
@@ -2943,9 +3094,9 @@ def union(left, right, distinct=True, dialect=None, **opts):
         'SELECT * FROM foo UNION SELECT * FROM bla'
 
     Args:
-        left (str or Expression): the SQL code string corresponding to the left-hand side.
+        left (str | Expression): the SQL code string corresponding to the left-hand side.
             If an `Expression` instance is passed, it will be used as-is.
-        right (str or Expression): the SQL code string corresponding to the right-hand side.
+        right (str | Expression): the SQL code string corresponding to the right-hand side.
             If an `Expression` instance is passed, it will be used as-is.
         distinct (bool): set the DISTINCT flag if and only if this is true.
         dialect (str): the dialect used to parse the input expression.
@@ -2968,9 +3119,9 @@ def intersect(left, right, distinct=True, dialect=None, **opts):
         'SELECT * FROM foo INTERSECT SELECT * FROM bla'
 
     Args:
-        left (str or Expression): the SQL code string corresponding to the left-hand side.
+        left (str | Expression): the SQL code string corresponding to the left-hand side.
             If an `Expression` instance is passed, it will be used as-is.
-        right (str or Expression): the SQL code string corresponding to the right-hand side.
+        right (str | Expression): the SQL code string corresponding to the right-hand side.
             If an `Expression` instance is passed, it will be used as-is.
         distinct (bool): set the DISTINCT flag if and only if this is true.
         dialect (str): the dialect used to parse the input expression.
@@ -2993,9 +3144,9 @@ def except_(left, right, distinct=True, dialect=None, **opts):
         'SELECT * FROM foo EXCEPT SELECT * FROM bla'
 
     Args:
-        left (str or Expression): the SQL code string corresponding to the left-hand side.
+        left (str | Expression): the SQL code string corresponding to the left-hand side.
             If an `Expression` instance is passed, it will be used as-is.
-        right (str or Expression): the SQL code string corresponding to the right-hand side.
+        right (str | Expression): the SQL code string corresponding to the right-hand side.
             If an `Expression` instance is passed, it will be used as-is.
         distinct (bool): set the DISTINCT flag if and only if this is true.
         dialect (str): the dialect used to parse the input expression.
@@ -3009,7 +3160,7 @@ def except_(left, right, distinct=True, dialect=None, **opts):
     return Except(this=left, expression=right, distinct=distinct)
 
 
-def select(*expressions, dialect=None, **opts):
+def select(*expressions, dialect=None, **opts) -> Select:
     """
     Initializes a syntax tree from one or multiple SELECT expressions.
 
@@ -3018,7 +3169,7 @@ def select(*expressions, dialect=None, **opts):
         'SELECT col1, col2 FROM tbl'
 
     Args:
-        *expressions (str or Expression): the SQL code string to parse as the expressions of a
+        *expressions (str | Expression): the SQL code string to parse as the expressions of a
             SELECT statement. If an Expression instance is passed, this is used as-is.
         dialect (str): the dialect used to parse the input expressions (in the case that an
             input expression is a SQL string).
@@ -3031,7 +3182,7 @@ def select(*expressions, dialect=None, **opts):
     return Select().select(*expressions, dialect=dialect, **opts)
 
 
-def from_(*expressions, dialect=None, **opts):
+def from_(*expressions, dialect=None, **opts) -> Select:
     """
     Initializes a syntax tree from a FROM expression.
 
@@ -3040,7 +3191,7 @@ def from_(*expressions, dialect=None, **opts):
         'SELECT col1, col2 FROM tbl'
 
     Args:
-        *expressions (str or Expression): the SQL code string to parse as the FROM expressions of a
+        *expressions (str | Expression): the SQL code string to parse as the FROM expressions of a
             SELECT statement. If an Expression instance is passed, this is used as-is.
         dialect (str): the dialect used to parse the input expression (in the case that the
             input expression is a SQL string).
@@ -3053,7 +3204,7 @@ def from_(*expressions, dialect=None, **opts):
     return Select().from_(*expressions, dialect=dialect, **opts)
 
 
-def update(table, properties, where=None, from_=None, dialect=None, **opts):
+def update(table, properties, where=None, from_=None, dialect=None, **opts) -> Update:
     """
     Creates an update statement.
 
@@ -3075,16 +3226,21 @@ def update(table, properties, where=None, from_=None, dialect=None, **opts):
     update = Update(this=maybe_parse(table, into=Table, dialect=dialect))
     update.set(
         "expressions",
-        [EQ(this=maybe_parse(k, dialect=dialect, **opts), expression=convert(v)) for k, v in properties.items()],
+        [
+            EQ(this=maybe_parse(k, dialect=dialect, **opts), expression=convert(v))
+            for k, v in properties.items()
+        ],
     )
     if from_:
         update.set("from", maybe_parse(from_, into=From, dialect=dialect, prefix="FROM", **opts))
+    if isinstance(where, Condition):
+        where = Where(this=where)
     if where:
         update.set("where", maybe_parse(where, into=Where, dialect=dialect, prefix="WHERE", **opts))
     return update
 
 
-def delete(table, where=None, dialect=None, **opts):
+def delete(table, where=None, dialect=None, **opts) -> Delete:
     """
     Builds a delete statement.
 
@@ -3108,7 +3264,7 @@ def delete(table, where=None, dialect=None, **opts):
     )
 
 
-def condition(expression, dialect=None, **opts):
+def condition(expression, dialect=None, **opts) -> Condition:
     """
     Initialize a logical condition expression.
 
@@ -3123,7 +3279,7 @@ def condition(expression, dialect=None, **opts):
         'SELECT * FROM tbl WHERE x = 1 AND y = 1'
 
     Args:
-        *expression (str or Expression): the SQL code string to parse.
+        *expression (str | Expression): the SQL code string to parse.
             If an Expression instance is passed, this is used as-is.
         dialect (str): the dialect used to parse the input expression (in the case that the
             input expression is a SQL string).
@@ -3133,7 +3289,7 @@ def condition(expression, dialect=None, **opts):
     Returns:
         Condition: the expression
     """
-    return maybe_parse(
+    return maybe_parse(  # type: ignore
         expression,
         into=Condition,
         dialect=dialect,
@@ -3141,7 +3297,7 @@ def condition(expression, dialect=None, **opts):
     )
 
 
-def and_(*expressions, dialect=None, **opts):
+def and_(*expressions, dialect=None, **opts) -> And:
     """
     Combine multiple conditions with an AND logical operator.
 
@@ -3150,7 +3306,7 @@ def and_(*expressions, dialect=None, **opts):
         'x = 1 AND (y = 1 AND z = 1)'
 
     Args:
-        *expressions (str or Expression): the SQL code strings to parse.
+        *expressions (str | Expression): the SQL code strings to parse.
             If an Expression instance is passed, this is used as-is.
         dialect (str): the dialect used to parse the input expression.
         **opts: other options to use to parse the input expressions.
@@ -3161,7 +3317,7 @@ def and_(*expressions, dialect=None, **opts):
     return _combine(expressions, And, dialect, **opts)
 
 
-def or_(*expressions, dialect=None, **opts):
+def or_(*expressions, dialect=None, **opts) -> Or:
     """
     Combine multiple conditions with an OR logical operator.
 
@@ -3170,7 +3326,7 @@ def or_(*expressions, dialect=None, **opts):
         'x = 1 OR (y = 1 OR z = 1)'
 
     Args:
-        *expressions (str or Expression): the SQL code strings to parse.
+        *expressions (str | Expression): the SQL code strings to parse.
             If an Expression instance is passed, this is used as-is.
         dialect (str): the dialect used to parse the input expression.
         **opts: other options to use to parse the input expressions.
@@ -3181,7 +3337,7 @@ def or_(*expressions, dialect=None, **opts):
     return _combine(expressions, Or, dialect, **opts)
 
 
-def not_(expression, dialect=None, **opts):
+def not_(expression, dialect=None, **opts) -> Not:
     """
     Wrap a condition with a NOT operator.
 
@@ -3190,7 +3346,7 @@ def not_(expression, dialect=None, **opts):
         "NOT this_suit = 'black'"
 
     Args:
-        expression (str or Expression): the SQL code strings to parse.
+        expression (str | Expression): the SQL code strings to parse.
             If an Expression instance is passed, this is used as-is.
         dialect (str): the dialect used to parse the input expression.
         **opts: other options to use to parse the input expressions.
@@ -3206,14 +3362,14 @@ def not_(expression, dialect=None, **opts):
     return Not(this=_wrap_operator(this))
 
 
-def paren(expression):
+def paren(expression) -> Paren:
     return Paren(this=expression)
 
 
 SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z][\w]*$")
 
 
-def to_identifier(alias, quoted=None):
+def to_identifier(alias, quoted=None) -> t.Optional[Identifier]:
     if alias is None:
         return None
     if isinstance(alias, Identifier):
@@ -3227,16 +3383,16 @@ def to_identifier(alias, quoted=None):
     return identifier
 
 
-def to_table(sql_path: str, **kwargs) -> Table:
+def to_table(sql_path: t.Optional[str | Table], **kwargs) -> t.Optional[Table]:
     """
     Create a table expression from a `[catalog].[schema].[table]` sql path. Catalog and schema are optional.
-
     If a table is passed in then that table is returned.
 
     Args:
-        sql_path(str|Table): `[catalog].[schema].[table]` string
+        sql_path: a `[catalog].[schema].[table]` string.
+
     Returns:
-        Table: A table expression
+        A table expression.
     """
     if sql_path is None or isinstance(sql_path, Table):
         return sql_path
@@ -3274,9 +3430,9 @@ def alias_(expression, alias, table=False, dialect=None, quoted=None, **opts):
         'foo AS bar'
 
     Args:
-        expression (str or Expression): the SQL code strings to parse.
+        expression (str | Expression): the SQL code strings to parse.
             If an Expression instance is passed, this is used as-is.
-        alias (str or Identifier): the alias name to use. If the name has
+        alias (str | Identifier): the alias name to use. If the name has
             special characters it is quoted.
         table (bool): create a table alias, default false
         dialect (str): the dialect used to parse the input expression.
@@ -3313,9 +3469,9 @@ def subquery(expression, alias=None, dialect=None, **opts):
         'SELECT x FROM (SELECT x FROM tbl) AS bar'
 
     Args:
-        expression (str or Expression): the SQL code strings to parse.
+        expression (str | Expression): the SQL code strings to parse.
             If an Expression instance is passed, this is used as-is.
-        alias (str or Expression): the alias name to use.
+        alias (str | Expression): the alias name to use.
         dialect (str): the dialect used to parse the input expression.
         **opts: other options to use to parse the input expressions.
 
@@ -3327,12 +3483,12 @@ def subquery(expression, alias=None, dialect=None, **opts):
     return Select().from_(expression, dialect=dialect, **opts)
 
 
-def column(col, table=None, quoted=None):
+def column(col, table=None, quoted=None) -> Column:
     """
     Build a Column.
     Args:
-        col (str or Expression): column name
-        table (str or Expression): table name
+        col (str | Expression): column name
+        table (str | Expression): table name
     Returns:
         Column: column instance
     """
@@ -3342,13 +3498,13 @@ def column(col, table=None, quoted=None):
     )
 
 
-def table_(table, db=None, catalog=None, quoted=None, alias=None):
+def table_(table, db=None, catalog=None, quoted=None, alias=None) -> Table:
     """Build a Table.
 
     Args:
-        table (str or Expression): column name
-        db (str or Expression): db name
-        catalog (str or Expression): catalog name
+        table (str | Expression): column name
+        db (str | Expression): db name
+        catalog (str | Expression): catalog name
 
     Returns:
         Table: table instance
@@ -3361,7 +3517,7 @@ def table_(table, db=None, catalog=None, quoted=None, alias=None):
     )
 
 
-def values(values, alias=None):
+def values(values, alias=None) -> Values:
     """Build VALUES statement.
 
     Example:
@@ -3383,7 +3539,7 @@ def values(values, alias=None):
     )
 
 
-def convert(value):
+def convert(value) -> Expression:
     """Convert a python value into an expression object.
 
     Raises an error if a conversion is not possible.
@@ -3414,7 +3570,7 @@ def convert(value):
             values=[convert(v) for v in value.values()],
         )
     if isinstance(value, datetime.datetime):
-        datetime_literal = Literal.string(value.strftime("%Y-%m-%d %H:%M:%S"))
+        datetime_literal = Literal.string(value.strftime("%Y-%m-%d %H:%M:%S.%f%z"))
         return TimeStrToTime(this=datetime_literal)
     if isinstance(value, datetime.date):
         date_literal = Literal.string(value.strftime("%Y-%m-%d"))
@@ -3434,15 +3590,14 @@ def replace_children(expression, fun):
 
         for cn in child_nodes:
             if isinstance(cn, Expression):
-                cns = ensure_list(fun(cn))
-                for child_node in cns:
+                for child_node in ensure_collection(fun(cn)):
                     new_child_nodes.append(child_node)
                     child_node.parent = expression
                     child_node.arg_key = k
             else:
                 new_child_nodes.append(cn)
 
-        expression.args[k] = new_child_nodes if is_list_arg else list_get(new_child_nodes, 0)
+        expression.args[k] = new_child_nodes if is_list_arg else seq_get(new_child_nodes, 0)
 
 
 def column_table_names(expression):
@@ -3463,7 +3618,7 @@ def column_table_names(expression):
     return list(dict.fromkeys(column.table for column in expression.find_all(Column)))
 
 
-def table_name(table):
+def table_name(table) -> str:
     """Get the full name of a table as a string.
 
     Args:
@@ -3479,6 +3634,9 @@ def table_name(table):
     """
 
     table = maybe_parse(table, into=Table)
+
+    if not table:
+        raise ValueError(f"Cannot parse {table}")
 
     return ".".join(
         part
@@ -3518,6 +3676,41 @@ def replace_tables(expression, mapping):
         return node
 
     return expression.transform(_replace_tables)
+
+
+def replace_placeholders(expression, *args, **kwargs):
+    """Replace placeholders in an expression.
+
+    Args:
+        expression (sqlglot.Expression): Expression node to be transformed and replaced
+        args: Positional names that will substitute unnamed placeholders in the given order
+        kwargs: Keyword arguments that will substitute named placeholders
+
+    Examples:
+        >>> from sqlglot import exp, parse_one
+        >>> replace_placeholders(
+        ...     parse_one("select * from :tbl where ? = ?"), "a", "b", tbl="foo"
+        ... ).sql()
+        'SELECT * FROM foo WHERE a = b'
+
+    Returns:
+        The mapped expression
+    """
+
+    def _replace_placeholders(node, args, **kwargs):
+        if isinstance(node, Placeholder):
+            if node.name:
+                new_name = kwargs.get(node.name)
+                if new_name:
+                    return to_identifier(new_name)
+            else:
+                try:
+                    return to_identifier(next(args))
+                except StopIteration:
+                    pass
+        return node
+
+    return expression.transform(_replace_placeholders, iter(args), **kwargs)
 
 
 TRUE = Boolean(this=True)

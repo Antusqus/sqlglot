@@ -31,6 +31,23 @@ SELECT x.a + x.b AS "_col_0" FROM x AS x;
 SELECT a, SUM(b) FROM x WHERE a > 1 AND b > 1 GROUP BY a;
 SELECT x.a AS a, SUM(x.b) AS "_col_1" FROM x AS x WHERE x.a > 1 AND x.b > 1 GROUP BY x.a;
 
+SELECT SUM(a) AS c FROM x HAVING SUM(a) > 3;
+SELECT SUM(x.a) AS c FROM x AS x HAVING SUM(x.a) > 3;
+
+SELECT SUM(a) AS a FROM x HAVING SUM(a) > 3;
+SELECT SUM(x.a) AS a FROM x AS x HAVING SUM(x.a) > 3;
+
+SELECT SUM(a) AS c FROM x HAVING c > 3;
+SELECT SUM(x.a) AS c FROM x AS x HAVING c > 3;
+
+# execute: false
+SELECT SUM(a) AS a FROM x HAVING a > 3;
+SELECT SUM(x.a) AS a FROM x AS x HAVING a > 3;
+
+# execute: false
+SELECT SUM(a) AS c FROM x HAVING SUM(c) > 3;
+SELECT SUM(x.a) AS c FROM x AS x HAVING SUM(c) > 3;
+
 SELECT a AS j, b FROM x ORDER BY j;
 SELECT x.a AS j, x.b AS b FROM x AS x ORDER BY j;
 
@@ -86,6 +103,16 @@ SELECT x.b AS b, x.a AS a FROM x AS x LEFT JOIN y AS y ON x.b = y.b QUALIFY ROW_
 # execute: false
 SELECT AGGREGATE(ARRAY(a, x.b), 0, (x, acc) -> x + acc + a) AS sum_agg FROM x;
 SELECT AGGREGATE(ARRAY(x.a, x.b), 0, (x, acc) -> x + acc + x.a) AS sum_agg FROM x AS x;
+
+# dialect: starrocks
+# execute: false
+SELECT DATE_TRUNC('week', a) AS a FROM x;
+SELECT DATE_TRUNC('week', x.a) AS a FROM x AS x;
+
+# dialect: bigquery
+# execute: false
+SELECT DATE_TRUNC(a, MONTH) AS a FROM x;
+SELECT DATE_TRUNC(x.a, MONTH) AS a FROM x AS x;
 
 --------------------------------------
 -- Derived tables

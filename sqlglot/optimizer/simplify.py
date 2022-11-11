@@ -229,7 +229,9 @@ def simplify_literals(expression):
                 operands.append(a)
 
         if len(operands) < size:
-            return functools.reduce(lambda a, b: expression.__class__(this=a, expression=b), operands)
+            return functools.reduce(
+                lambda a, b: expression.__class__(this=a, expression=b), operands
+            )
     elif isinstance(expression, exp.Neg):
         this = expression.this
         if this.is_number:
@@ -255,6 +257,12 @@ def _simplify_binary(expression, a, b):
                 return TRUE if not_ else FALSE
             if a == NULL:
                 return FALSE if not_ else TRUE
+    elif isinstance(expression, exp.NullSafeEQ):
+        if a == b:
+            return TRUE
+    elif isinstance(expression, exp.NullSafeNEQ):
+        if a == b:
+            return FALSE
     elif NULL in (a, b):
         return NULL
 
@@ -357,7 +365,7 @@ def extract_date(cast):
 
 def extract_interval(interval):
     try:
-        from dateutil.relativedelta import relativedelta
+        from dateutil.relativedelta import relativedelta  # type: ignore
     except ModuleNotFoundError:
         return None
 

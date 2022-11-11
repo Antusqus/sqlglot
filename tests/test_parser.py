@@ -23,8 +23,6 @@ class TestParser(unittest.TestCase):
 
     def test_float(self):
         self.assertEqual(parse_one(".2"), parse_one("0.2"))
-        self.assertEqual(parse_one("int 1"), parse_one("CAST(1 AS INT)"))
-        self.assertEqual(parse_one("int.5"), parse_one("CAST(0.5 AS INT)"))
 
     def test_table(self):
         tables = [t.sql() for t in parse_one("select * from a, b.c, .d").find_all(exp.Table)]
@@ -33,7 +31,9 @@ class TestParser(unittest.TestCase):
     def test_select(self):
         self.assertIsNotNone(parse_one("select 1 natural"))
         self.assertIsNotNone(parse_one("select * from (select 1) x order by x.y").args["order"])
-        self.assertIsNotNone(parse_one("select * from x where a = (select 1) order by x.y").args["order"])
+        self.assertIsNotNone(
+            parse_one("select * from x where a = (select 1) order by x.y").args["order"]
+        )
         self.assertEqual(len(parse_one("select * from (select 1) x cross join y").args["joins"]), 1)
         self.assertEqual(
             parse_one("""SELECT * FROM x CROSS JOIN y, z LATERAL VIEW EXPLODE(y)""").sql(),
@@ -41,11 +41,40 @@ class TestParser(unittest.TestCase):
         )
 
     def test_command(self):
-        expressions = parse("SET x = 1; ADD JAR s3://a; SELECT 1")
+        expressions = parse("SET x = 1; ADD JAR s3://a; SELECT 1", read="hive")
         self.assertEqual(len(expressions), 3)
         self.assertEqual(expressions[0].sql(), "SET x = 1")
         self.assertEqual(expressions[1].sql(), "ADD JAR s3://a")
         self.assertEqual(expressions[2].sql(), "SELECT 1")
+
+    def test_transactions(self):
+        expression = parse_one("BEGIN TRANSACTION")
+        self.assertIsNone(expression.this)
+        self.assertEqual(expression.args["modes"], [])
+        self.assertEqual(expression.sql(), "BEGIN")
+
+        expression = parse_one("START TRANSACTION", read="mysql")
+        self.assertIsNone(expression.this)
+        self.assertEqual(expression.args["modes"], [])
+        self.assertEqual(expression.sql(), "BEGIN")
+
+        expression = parse_one("BEGIN DEFERRED TRANSACTION")
+        self.assertEqual(expression.this, "DEFERRED")
+        self.assertEqual(expression.args["modes"], [])
+        self.assertEqual(expression.sql(), "BEGIN")
+
+        expression = parse_one(
+            "START TRANSACTION READ WRITE, ISOLATION LEVEL SERIALIZABLE", read="presto"
+        )
+        self.assertIsNone(expression.this)
+        self.assertEqual(expression.args["modes"][0], "READ WRITE")
+        self.assertEqual(expression.args["modes"][1], "ISOLATION LEVEL SERIALIZABLE")
+        self.assertEqual(expression.sql(), "BEGIN")
+
+        expression = parse_one("BEGIN", read="bigquery")
+        self.assertNotIsInstance(expression, exp.Transaction)
+        self.assertIsNone(expression.expression)
+        self.assertEqual(expression.sql(), "BEGIN")
 
     def test_identify(self):
         expression = parse_one(
@@ -125,26 +154,70 @@ class TestParser(unittest.TestCase):
     def test_var(self):
         self.assertEqual(parse_one("SELECT @JOIN, @'foo'").sql(), "SELECT @JOIN, @'foo'")
 
-    def test_annotations(self):
+    def test_comments(self):
         expression = parse_one(
             """
-            SELECT
-                a #annotation1,
-                b as B #annotation2:testing ,
-                "test#annotation",c#annotation3, d #annotation4,
-                e #,
-                f # space
+            --comment1
+            SELECT /* this won't be used */
+                a, --comment2
+                b as B, --comment3:testing
+                "test--annotation",
+                c, --comment4 --foo
+                e, --
+                f -- space
             FROM foo
         """
         )
 
-        assert expression.expressions[0].name == "annotation1"
-        assert expression.expressions[1].name == "annotation2:testing"
-        assert expression.expressions[2].name == "test#annotation"
-        assert expression.expressions[3].name == "annotation3"
-        assert expression.expressions[4].name == "annotation4"
-        assert expression.expressions[5].name == ""
-        assert expression.expressions[6].name == "space"
+        self.assertEqual(expression.comment, "comment1")
+        self.assertEqual(expression.expressions[0].comment, "comment2")
+        self.assertEqual(expression.expressions[1].comment, "comment3:testing")
+        self.assertEqual(expression.expressions[2].comment, None)
+        self.assertEqual(expression.expressions[3].comment, "comment4 --foo")
+        self.assertEqual(expression.expressions[4].comment, "")
+        self.assertEqual(expression.expressions[5].comment, " space")
+
+    def test_type_literals(self):
+        self.assertEqual(parse_one("int 1"), parse_one("CAST(1 AS INT)"))
+        self.assertEqual(parse_one("int.5"), parse_one("CAST(0.5 AS INT)"))
+        self.assertEqual(
+            parse_one("TIMESTAMP '2022-01-01'").sql(), "CAST('2022-01-01' AS TIMESTAMP)"
+        )
+        self.assertEqual(
+            parse_one("TIMESTAMP(1) '2022-01-01'").sql(), "CAST('2022-01-01' AS TIMESTAMP(1))"
+        )
+        self.assertEqual(
+            parse_one("TIMESTAMP WITH TIME ZONE '2022-01-01'").sql(),
+            "CAST('2022-01-01' AS TIMESTAMPTZ)",
+        )
+        self.assertEqual(
+            parse_one("TIMESTAMP WITH LOCAL TIME ZONE '2022-01-01'").sql(),
+            "CAST('2022-01-01' AS TIMESTAMPLTZ)",
+        )
+        self.assertEqual(
+            parse_one("TIMESTAMP WITHOUT TIME ZONE '2022-01-01'").sql(),
+            "CAST('2022-01-01' AS TIMESTAMP)",
+        )
+        self.assertEqual(
+            parse_one("TIMESTAMP(1) WITH TIME ZONE '2022-01-01'").sql(),
+            "CAST('2022-01-01' AS TIMESTAMPTZ(1))",
+        )
+        self.assertEqual(
+            parse_one("TIMESTAMP(1) WITH LOCAL TIME ZONE '2022-01-01'").sql(),
+            "CAST('2022-01-01' AS TIMESTAMPLTZ(1))",
+        )
+        self.assertEqual(
+            parse_one("TIMESTAMP(1) WITHOUT TIME ZONE '2022-01-01'").sql(),
+            "CAST('2022-01-01' AS TIMESTAMP(1))",
+        )
+        self.assertEqual(parse_one("TIMESTAMP(1) WITH TIME ZONE").sql(), "TIMESTAMPTZ(1)")
+        self.assertEqual(parse_one("TIMESTAMP(1) WITH LOCAL TIME ZONE").sql(), "TIMESTAMPLTZ(1)")
+        self.assertEqual(parse_one("TIMESTAMP(1) WITHOUT TIME ZONE").sql(), "TIMESTAMP(1)")
+        self.assertEqual(parse_one("""JSON '{"x":"y"}'""").sql(), """CAST('{"x":"y"}' AS JSON)""")
+        self.assertIsInstance(parse_one("TIMESTAMP(1)"), exp.Func)
+        self.assertIsInstance(parse_one("TIMESTAMP('2022-01-01')"), exp.Func)
+        self.assertIsInstance(parse_one("TIMESTAMP()"), exp.Func)
+        self.assertIsInstance(parse_one("map.x"), exp.Column)
 
     def test_pretty_config_override(self):
         self.assertEqual(parse_one("SELECT col FROM x").sql(), "SELECT col FROM x")
@@ -156,7 +229,7 @@ class TestParser(unittest.TestCase):
     @patch("sqlglot.parser.logger")
     def test_comment_error_n(self, logger):
         parse_one(
-            """CREATE TABLE x
+            """SUM
 (
 -- test
 )""",
@@ -164,19 +237,19 @@ class TestParser(unittest.TestCase):
         )
 
         assert_logger_contains(
-            "Required keyword: 'expressions' missing for <class 'sqlglot.expressions.Schema'>. Line 4, Col: 1.",
+            "Required keyword: 'this' missing for <class 'sqlglot.expressions.Sum'>. Line 4, Col: 1.",
             logger,
         )
 
     @patch("sqlglot.parser.logger")
     def test_comment_error_r(self, logger):
         parse_one(
-            """CREATE TABLE x (-- test\r)""",
+            """SUM(-- test\r)""",
             error_level=ErrorLevel.WARN,
         )
 
         assert_logger_contains(
-            "Required keyword: 'expressions' missing for <class 'sqlglot.expressions.Schema'>. Line 2, Col: 1.",
+            "Required keyword: 'this' missing for <class 'sqlglot.expressions.Sum'>. Line 2, Col: 1.",
             logger,
         )
 

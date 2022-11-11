@@ -106,6 +106,15 @@ class TestBigQuery(Validator):
             },
         )
         self.validate_all(
+            "CURRENT_DATE",
+            read={
+                "tsql": "GETDATE()",
+            },
+            write={
+                "tsql": "GETDATE()",
+            },
+        )
+        self.validate_all(
             "current_datetime",
             write={
                 "bigquery": "CURRENT_DATETIME()",
@@ -145,6 +154,14 @@ class TestBigQuery(Validator):
                 "presto": "CURRENT_TIMESTAMP()",
                 "hive": "CURRENT_TIMESTAMP()",
                 "spark": "CURRENT_TIMESTAMP()",
+            },
+        )
+
+        self.validate_all(
+            "DIV(x, y)",
+            write={
+                "bigquery": "DIV(x, y)",
+                "duckdb": "CAST(x / y AS INT)",
             },
         )
 
@@ -269,10 +286,16 @@ class TestBigQuery(Validator):
                 "bigquery": "SELECT * FROM (SELECT a, b, c FROM test) PIVOT(SUM(b) AS d, COUNT(*) AS e FOR c IN ('x', 'y'))",
             },
         )
+        self.validate_identity("BEGIN A B C D E F")
+        self.validate_identity("BEGIN TRANSACTION")
+        self.validate_identity("COMMIT TRANSACTION")
+        self.validate_identity("ROLLBACK TRANSACTION")
 
     def test_user_defined_functions(self):
         self.validate_identity(
             "CREATE TEMPORARY FUNCTION a(x FLOAT64, y FLOAT64) RETURNS FLOAT64 NOT DETERMINISTIC LANGUAGE js AS 'return x*y;'"
         )
         self.validate_identity("CREATE TEMPORARY FUNCTION a(x FLOAT64, y FLOAT64) AS ((x + 4) / y)")
-        self.validate_identity("CREATE TABLE FUNCTION a(x INT64) RETURNS TABLE <q STRING, r INT64> AS SELECT s, t")
+        self.validate_identity(
+            "CREATE TABLE FUNCTION a(x INT64) RETURNS TABLE <q STRING, r INT64> AS SELECT s, t"
+        )

@@ -1,10 +1,18 @@
+from __future__ import annotations
+
+from sqlglot.helper import dict_depth
+from sqlglot.schema import AbstractMappingSchema
+
+
 class Table:
-    def __init__(self, *columns, rows=None):
-        self.columns = tuple(columns if isinstance(columns[0], str) else columns[0])
+    def __init__(self, columns, rows=None, column_range=None):
+        self.columns = tuple(columns)
+        self.column_range = column_range
+        self.reader = RowReader(self.columns, self.column_range)
+
         self.rows = rows or []
         if rows:
             assert len(rows[0]) == len(self.columns)
-        self.reader = RowReader(self.columns)
         self.range_reader = RangeReader(self)
 
     def append(self, row):
@@ -29,15 +37,22 @@ class Table:
         return self.reader
 
     def __repr__(self):
-        widths = {column: len(column) for column in self.columns}
-        lines = [" ".join(column for column in self.columns)]
+        columns = tuple(
+            column
+            for i, column in enumerate(self.columns)
+            if not self.column_range or i in self.column_range
+        )
+        widths = {column: len(column) for column in columns}
+        lines = [" ".join(column for column in columns)]
 
         for i, row in enumerate(self):
             if i > 10:
                 break
 
             lines.append(
-                " ".join(str(row[column]).rjust(widths[column])[0 : widths[column]] for column in self.columns)
+                " ".join(
+                    str(row[column]).rjust(widths[column])[0 : widths[column]] for column in columns
+                )
             )
         return "\n".join(lines)
 
@@ -70,9 +85,39 @@ class RangeReader:
 
 
 class RowReader:
-    def __init__(self, columns):
-        self.columns = {column: i for i, column in enumerate(columns)}
+    def __init__(self, columns, column_range=None):
+        self.columns = {
+            column: i for i, column in enumerate(columns) if not column_range or i in column_range
+        }
         self.row = None
 
     def __getitem__(self, column):
         return self.row[self.columns[column]]
+
+
+class Tables(AbstractMappingSchema[Table]):
+    pass
+
+
+def ensure_tables(d: dict | None) -> Tables:
+    return Tables(_ensure_tables(d))
+
+
+def _ensure_tables(d: dict | None) -> dict:
+    if not d:
+        return {}
+
+    depth = dict_depth(d)
+
+    if depth > 1:
+        return {k: _ensure_tables(v) for k, v in d.items()}
+
+    result = {}
+    for name, table in d.items():
+        if isinstance(table, Table):
+            result[name] = table
+        else:
+            columns = tuple(table[0]) if table else ()
+            rows = [tuple(row[c] for c in columns) for row in table]
+            result[name] = Table(columns=columns, rows=rows)
+    return result

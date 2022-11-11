@@ -1,4 +1,6 @@
-from sqlglot import exp, transforms
+from __future__ import annotations
+
+from sqlglot import exp, generator, parser, tokens, transforms
 from sqlglot.dialects.dialect import (
     Dialect,
     approx_count_distinct_sql,
@@ -13,10 +15,41 @@ from sqlglot.dialects.dialect import (
     struct_extract_sql,
     var_map_sql,
 )
-from sqlglot.generator import Generator
-from sqlglot.helper import list_get
-from sqlglot.parser import Parser, parse_var_map
-from sqlglot.tokens import Tokenizer
+from sqlglot.helper import seq_get
+from sqlglot.parser import parse_var_map
+from sqlglot.tokens import TokenType
+
+# (FuncType, Multiplier)
+DATE_DELTA_INTERVAL = {
+    "YEAR": ("ADD_MONTHS", 12),
+    "MONTH": ("ADD_MONTHS", 1),
+    "QUARTER": ("ADD_MONTHS", 3),
+    "WEEK": ("DATE_ADD", 7),
+    "DAY": ("DATE_ADD", 1),
+}
+
+DIFF_MONTH_SWITCH = ("YEAR", "QUARTER", "MONTH")
+
+
+def _add_date_sql(self, expression):
+    unit = expression.text("unit").upper()
+    func, multiplier = DATE_DELTA_INTERVAL.get(unit, ("DATE_ADD", 1))
+    modified_increment = (
+        int(expression.text("expression")) * multiplier
+        if expression.expression.is_number
+        else expression.expression
+    )
+    modified_increment = exp.Literal.number(modified_increment)
+    return f"{func}({self.format_args(expression.this, modified_increment.this)})"
+
+
+def _date_diff_sql(self, expression):
+    unit = expression.text("unit").upper()
+    sql_func = "MONTHS_BETWEEN" if unit in DIFF_MONTH_SWITCH else "DATEDIFF"
+    _, multiplier = DATE_DELTA_INTERVAL.get(unit, ("", 1))
+    multiplier_sql = f" / {multiplier}" if multiplier > 1 else ""
+    diff_sql = f"{sql_func}({self.format_args(expression.this, expression.expression)})"
+    return f"{diff_sql}{multiplier_sql}"
 
 
 def _array_sort(self, expression):
@@ -81,6 +114,7 @@ def _unnest_to_explode_sql(self, expression):
             self.sql(
                 exp.Lateral(
                     this=udtf(this=expression),
+                    view=True,
                     alias=exp.TableAlias(this=alias.this, columns=[column]),
                 )
             )
@@ -120,20 +154,24 @@ class Hive(Dialect):
         "m": "%-M",
         "ss": "%S",
         "s": "%-S",
-        "S": "%f",
+        "SSSSSS": "%f",
         "a": "%p",
         "DD": "%j",
         "D": "%-j",
+        "E": "%a",
+        "EE": "%a",
+        "EEE": "%a",
+        "EEEE": "%A",
     }
 
     date_format = "'yyyy-MM-dd'"
     dateint_format = "'yyyyMMdd'"
     time_format = "'yyyy-MM-dd HH:mm:ss'"
 
-    class Tokenizer(Tokenizer):
+    class Tokenizer(tokens.Tokenizer):
         QUOTES = ["'", '"']
         IDENTIFIERS = ["`"]
-        ESCAPE = "\\"
+        ESCAPES = ["\\"]
         ENCODE = "utf-8"
 
         NUMERIC_LITERALS = {
@@ -144,41 +182,54 @@ class Hive(Dialect):
             "F": "FLOAT",
             "BD": "DECIMAL",
         }
+        KEYWORDS = {
+            **tokens.Tokenizer.KEYWORDS,
+            "ADD ARCHIVE": TokenType.COMMAND,
+            "ADD ARCHIVES": TokenType.COMMAND,
+            "ADD FILE": TokenType.COMMAND,
+            "ADD FILES": TokenType.COMMAND,
+            "ADD JAR": TokenType.COMMAND,
+            "ADD JARS": TokenType.COMMAND,
+        }
 
-    class Parser(Parser):
+    class Parser(parser.Parser):
         STRICT_CAST = False
 
         FUNCTIONS = {
-            **Parser.FUNCTIONS,
+            **parser.Parser.FUNCTIONS,
             "APPROX_COUNT_DISTINCT": exp.ApproxDistinct.from_arg_list,
             "COLLECT_LIST": exp.ArrayAgg.from_arg_list,
             "DATE_ADD": lambda args: exp.TsOrDsAdd(
-                this=list_get(args, 0),
-                expression=list_get(args, 1),
+                this=seq_get(args, 0),
+                expression=seq_get(args, 1),
                 unit=exp.Literal.string("DAY"),
             ),
             "DATEDIFF": lambda args: exp.DateDiff(
-                this=exp.TsOrDsToDate(this=list_get(args, 0)),
-                expression=exp.TsOrDsToDate(this=list_get(args, 1)),
+                this=exp.TsOrDsToDate(this=seq_get(args, 0)),
+                expression=exp.TsOrDsToDate(this=seq_get(args, 1)),
             ),
             "DATE_SUB": lambda args: exp.TsOrDsAdd(
-                this=list_get(args, 0),
+                this=seq_get(args, 0),
                 expression=exp.Mul(
-                    this=list_get(args, 1),
+                    this=seq_get(args, 1),
                     expression=exp.Literal.number(-1),
                 ),
                 unit=exp.Literal.string("DAY"),
             ),
             "DATE_FORMAT": format_time_lambda(exp.TimeToStr, "hive"),
-            "DAY": lambda args: exp.Day(this=exp.TsOrDsToDate(this=list_get(args, 0))),
+            "DAY": lambda args: exp.Day(this=exp.TsOrDsToDate(this=seq_get(args, 0))),
             "FROM_UNIXTIME": format_time_lambda(exp.UnixToStr, "hive", True),
             "GET_JSON_OBJECT": exp.JSONExtractScalar.from_arg_list,
             "LOCATE": lambda args: exp.StrPosition(
-                this=list_get(args, 1),
-                substr=list_get(args, 0),
-                position=list_get(args, 2),
+                this=seq_get(args, 1),
+                substr=seq_get(args, 0),
+                position=seq_get(args, 2),
             ),
-            "LOG": (lambda args: exp.Log.from_arg_list(args) if len(args) > 1 else exp.Ln.from_arg_list(args)),
+            "LOG": (
+                lambda args: exp.Log.from_arg_list(args)
+                if len(args) > 1
+                else exp.Ln.from_arg_list(args)
+            ),
             "MAP": parse_var_map,
             "MONTH": lambda args: exp.Month(this=exp.TsOrDsToDate.from_arg_list(args)),
             "PERCENTILE": exp.Quantile.from_arg_list,
@@ -191,15 +242,16 @@ class Hive(Dialect):
             "YEAR": lambda args: exp.Year(this=exp.TsOrDsToDate.from_arg_list(args)),
         }
 
-    class Generator(Generator):
+    class Generator(generator.Generator):
         TYPE_MAPPING = {
-            **Generator.TYPE_MAPPING,
+            **generator.Generator.TYPE_MAPPING,
             exp.DataType.Type.TEXT: "STRING",
+            exp.DataType.Type.VARBINARY: "BINARY",
         }
 
         TRANSFORMS = {
-            **Generator.TRANSFORMS,
-            **transforms.UNALIAS_GROUP,
+            **generator.Generator.TRANSFORMS,
+            **transforms.UNALIAS_GROUP,  # type: ignore
             exp.AnonymousProperty: _property_sql,
             exp.ApproxDistinct: approx_count_distinct_sql,
             exp.ArrayAgg: rename_func("COLLECT_LIST"),
@@ -207,8 +259,8 @@ class Hive(Dialect):
             exp.ArraySize: rename_func("SIZE"),
             exp.ArraySort: _array_sort,
             exp.With: no_recursive_cte_sql,
-            exp.DateAdd: lambda self, e: f"DATE_ADD({self.sql(e, 'this')}, {self.sql(e, 'expression')})",
-            exp.DateDiff: lambda self, e: f"DATEDIFF({self.sql(e, 'this')}, {self.sql(e, 'expression')})",
+            exp.DateAdd: _add_date_sql,
+            exp.DateDiff: _date_diff_sql,
             exp.DateStrToDate: rename_func("TO_DATE"),
             exp.DateToDi: lambda self, e: f"CAST(DATE_FORMAT({self.sql(e, 'this')}, {Hive.dateint_format}) AS INT)",
             exp.DiToDate: lambda self, e: f"TO_DATE(CAST({self.sql(e, 'this')} AS STRING), {Hive.dateint_format})",
@@ -249,6 +301,7 @@ class Hive(Dialect):
             exp.UnixToTime: rename_func("FROM_UNIXTIME"),
             exp.UnixToTimeStr: rename_func("FROM_UNIXTIME"),
             exp.PartitionedByProperty: lambda self, e: f"PARTITIONED BY {self.sql(e, 'value')}",
+            exp.NumberToStr: rename_func("FORMAT_NUMBER"),
         }
 
         WITH_PROPERTIES = {exp.AnonymousProperty}

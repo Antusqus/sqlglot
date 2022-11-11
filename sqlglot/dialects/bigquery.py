@@ -1,26 +1,33 @@
-from sqlglot import exp
+from __future__ import annotations
+
+from sqlglot import exp, generator, parser, tokens
 from sqlglot.dialects.dialect import (
     Dialect,
     inline_array_sql,
     no_ilike_sql,
     rename_func,
 )
-from sqlglot.generator import Generator
-from sqlglot.helper import list_get
-from sqlglot.parser import Parser
-from sqlglot.tokens import Tokenizer, TokenType
+from sqlglot.helper import seq_get
+from sqlglot.tokens import TokenType
 
 
 def _date_add(expression_class):
     def func(args):
-        interval = list_get(args, 1)
+        interval = seq_get(args, 1)
         return expression_class(
-            this=list_get(args, 0),
+            this=seq_get(args, 0),
             expression=interval.this,
             unit=interval.args.get("unit"),
         )
 
     return func
+
+
+def _date_trunc(args):
+    unit = seq_get(args, 1)
+    if isinstance(unit, exp.Column):
+        unit = exp.Var(this=unit.name)
+    return exp.DateTrunc(this=seq_get(args, 0), expression=unit)
 
 
 def _date_add_sql(data_type, kind):
@@ -40,7 +47,8 @@ def _derived_table_values_to_unnest(self, expression):
     structs = []
     for row in rows:
         aliases = [
-            exp.alias_(value, column_name) for value, column_name in zip(row, expression.args["alias"].args["columns"])
+            exp.alias_(value, column_name)
+            for value, column_name in zip(row, expression.args["alias"].args["columns"])
         ]
         structs.append(exp.Struct(expressions=aliases))
     unnest_exp = exp.Unnest(expressions=[exp.Array(expressions=structs)])
@@ -89,18 +97,19 @@ class BigQuery(Dialect):
         "%j": "%-j",
     }
 
-    class Tokenizer(Tokenizer):
+    class Tokenizer(tokens.Tokenizer):
         QUOTES = [
             (prefix + quote, quote) if prefix else quote
             for quote in ["'", '"', '"""', "'''"]
             for prefix in ["", "r", "R"]
         ]
+        COMMENTS = ["--", "#", ("/*", "*/")]
         IDENTIFIERS = ["`"]
-        ESCAPE = "\\"
+        ESCAPES = ["\\"]
         HEX_STRINGS = [("0x", ""), ("0X", "")]
 
         KEYWORDS = {
-            **Tokenizer.KEYWORDS,
+            **tokens.Tokenizer.KEYWORDS,
             "CURRENT_DATETIME": TokenType.CURRENT_DATETIME,
             "CURRENT_TIME": TokenType.CURRENT_TIME,
             "GEOGRAPHY": TokenType.GEOGRAPHY,
@@ -110,36 +119,43 @@ class BigQuery(Dialect):
             "UNKNOWN": TokenType.NULL,
             "WINDOW": TokenType.WINDOW,
             "NOT DETERMINISTIC": TokenType.VOLATILE,
+            "BEGIN": TokenType.COMMAND,
+            "BEGIN TRANSACTION": TokenType.BEGIN,
         }
+        KEYWORDS.pop("DIV")
 
-    class Parser(Parser):
+    class Parser(parser.Parser):
         FUNCTIONS = {
-            **Parser.FUNCTIONS,
+            **parser.Parser.FUNCTIONS,
+            "DATE_TRUNC": _date_trunc,
             "DATE_ADD": _date_add(exp.DateAdd),
             "DATETIME_ADD": _date_add(exp.DatetimeAdd),
+            "DIV": lambda args: exp.IntDiv(this=seq_get(args, 0), expression=seq_get(args, 1)),
             "TIME_ADD": _date_add(exp.TimeAdd),
             "TIMESTAMP_ADD": _date_add(exp.TimestampAdd),
             "DATE_SUB": _date_add(exp.DateSub),
             "DATETIME_SUB": _date_add(exp.DatetimeSub),
             "TIME_SUB": _date_add(exp.TimeSub),
             "TIMESTAMP_SUB": _date_add(exp.TimestampSub),
-            "PARSE_TIMESTAMP": lambda args: exp.StrToTime(this=list_get(args, 1), format=list_get(args, 0)),
+            "PARSE_TIMESTAMP": lambda args: exp.StrToTime(
+                this=seq_get(args, 1), format=seq_get(args, 0)
+            ),
         }
 
         NO_PAREN_FUNCTIONS = {
-            **Parser.NO_PAREN_FUNCTIONS,
+            **parser.Parser.NO_PAREN_FUNCTIONS,
             TokenType.CURRENT_DATETIME: exp.CurrentDatetime,
             TokenType.CURRENT_TIME: exp.CurrentTime,
         }
 
         NESTED_TYPE_TOKENS = {
-            *Parser.NESTED_TYPE_TOKENS,
+            *parser.Parser.NESTED_TYPE_TOKENS,
             TokenType.TABLE,
         }
 
-    class Generator(Generator):
+    class Generator(generator.Generator):
         TRANSFORMS = {
-            **Generator.TRANSFORMS,
+            **generator.Generator.TRANSFORMS,
             exp.Array: inline_array_sql,
             exp.ArraySize: rename_func("ARRAY_LENGTH"),
             exp.DateAdd: _date_add_sql("DATE", "ADD"),
@@ -148,6 +164,7 @@ class BigQuery(Dialect):
             exp.DatetimeSub: _date_add_sql("DATETIME", "SUB"),
             exp.DateDiff: lambda self, e: f"DATE_DIFF({self.sql(e, 'this')}, {self.sql(e, 'expression')}, {self.sql(e.args.get('unit', 'DAY'))})",
             exp.ILike: no_ilike_sql,
+            exp.IntDiv: rename_func("DIV"),
             exp.StrToTime: lambda self, e: f"PARSE_TIMESTAMP({self.format_time(e)}, {self.sql(e, 'this')})",
             exp.TimeAdd: _date_add_sql("TIME", "ADD"),
             exp.TimeSub: _date_add_sql("TIME", "SUB"),
@@ -157,11 +174,13 @@ class BigQuery(Dialect):
             exp.Values: _derived_table_values_to_unnest,
             exp.ReturnsProperty: _returnsproperty_sql,
             exp.Create: _create_sql,
-            exp.VolatilityProperty: lambda self, e: f"DETERMINISTIC" if e.name == "IMMUTABLE" else "NOT DETERMINISTIC",
+            exp.VolatilityProperty: lambda self, e: f"DETERMINISTIC"
+            if e.name == "IMMUTABLE"
+            else "NOT DETERMINISTIC",
         }
 
         TYPE_MAPPING = {
-            **Generator.TYPE_MAPPING,
+            **generator.Generator.TYPE_MAPPING,
             exp.DataType.Type.TINYINT: "INT64",
             exp.DataType.Type.SMALLINT: "INT64",
             exp.DataType.Type.INT: "INT64",
@@ -186,6 +205,15 @@ class BigQuery(Dialect):
         }
 
         EXPLICIT_UNION = True
+
+        def transaction_sql(self, *_):
+            return "BEGIN TRANSACTION"
+
+        def commit_sql(self, *_):
+            return "COMMIT TRANSACTION"
+
+        def rollback_sql(self, *_):
+            return "ROLLBACK TRANSACTION"
 
         def in_unnest_op(self, unnest):
             return self.sql(unnest)

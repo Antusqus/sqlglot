@@ -1,21 +1,22 @@
 import ast
 import collections
 import itertools
+import math
 
-from sqlglot import exp, planner
+from sqlglot import exp, generator, planner, tokens
 from sqlglot.dialects.dialect import Dialect, inline_array_sql
+from sqlglot.errors import ExecuteError
 from sqlglot.executor.context import Context
 from sqlglot.executor.env import ENV
 from sqlglot.executor.table import Table
-from sqlglot.generator import Generator
 from sqlglot.helper import csv_reader
-from sqlglot.tokens import Tokenizer
 
 
 class PythonExecutor:
-    def __init__(self, env=None):
+    def __init__(self, env=None, tables=None):
         self.generator = Python().generator(identify=True)
         self.env = {**ENV, **(env or {})}
+        self.tables = tables or {}
 
     def execute(self, plan):
         running = set()
@@ -25,32 +26,39 @@ class PythonExecutor:
 
         while queue:
             node = queue.pop()
-            context = self.context(
-                {name: table for dep in node.dependencies for name, table in contexts[dep].tables.items()}
-            )
-            running.add(node)
+            try:
+                context = self.context(
+                    {
+                        name: table
+                        for dep in node.dependencies
+                        for name, table in contexts[dep].tables.items()
+                    }
+                )
+                running.add(node)
 
-            if isinstance(node, planner.Scan):
-                contexts[node] = self.scan(node, context)
-            elif isinstance(node, planner.Aggregate):
-                contexts[node] = self.aggregate(node, context)
-            elif isinstance(node, planner.Join):
-                contexts[node] = self.join(node, context)
-            elif isinstance(node, planner.Sort):
-                contexts[node] = self.sort(node, context)
-            else:
-                raise NotImplementedError
+                if isinstance(node, planner.Scan):
+                    contexts[node] = self.scan(node, context)
+                elif isinstance(node, planner.Aggregate):
+                    contexts[node] = self.aggregate(node, context)
+                elif isinstance(node, planner.Join):
+                    contexts[node] = self.join(node, context)
+                elif isinstance(node, planner.Sort):
+                    contexts[node] = self.sort(node, context)
+                else:
+                    raise NotImplementedError
 
-            running.remove(node)
-            finished.add(node)
+                running.remove(node)
+                finished.add(node)
 
-            for dep in node.dependents:
-                if dep not in running and all(d in contexts for d in dep.dependencies):
-                    queue.add(dep)
+                for dep in node.dependents:
+                    if dep not in running and all(d in contexts for d in dep.dependencies):
+                        queue.add(dep)
 
-            for dep in node.dependencies:
-                if all(d in finished for d in dep.dependents):
-                    contexts.pop(dep)
+                for dep in node.dependencies:
+                    if all(d in finished for d in dep.dependents):
+                        contexts.pop(dep)
+            except Exception as e:
+                raise ExecuteError(f"Step '{node.id}' failed: {e}") from e
 
         root = plan.root
         return contexts[root].tables[root.name]
@@ -73,16 +81,16 @@ class PythonExecutor:
         return Context(tables, env=self.env)
 
     def table(self, expressions):
-        return Table(expression.alias_or_name for expression in expressions)
+        return Table(
+            expression.alias_or_name if isinstance(expression, exp.Expression) else expression
+            for expression in expressions
+        )
 
     def scan(self, step, context):
-        if hasattr(step, "source"):
-            source = step.source
+        source = step.source
 
-            if isinstance(source, exp.Expression):
-                source = source.name or source.alias
-        else:
-            source = step.name
+        if isinstance(source, exp.Expression):
+            source = source.name or source.alias
 
         condition = self.generate(step.condition)
         projections = self.generate_tuple(step.projections)
@@ -91,19 +99,19 @@ class PythonExecutor:
             if not projections and not condition:
                 return self.context({step.name: context.tables[source]})
             table_iter = context.table_iter(source)
-        else:
+        elif isinstance(step.source, exp.Table) and step.source.this.name == "READ_CSV":
             table_iter = self.scan_csv(step)
+        else:
+            table_iter = self.scan_table(step)
 
         if projections:
             sink = self.table(step.projections)
-        elif source in context:
-            sink = Table(context[source].columns)
         else:
             sink = None
 
         for reader, ctx in table_iter:
             if sink is None:
-                sink = Table(ctx[source].columns)
+                sink = Table(reader.columns)
 
             if condition and not ctx.eval(condition):
                 continue
@@ -117,6 +125,13 @@ class PythonExecutor:
                 break
 
         return self.context({step.name: sink})
+
+    def scan_table(self, step):
+        table = self.tables.find(step.source)
+
+        context = self.context({step.source.alias_or_name: table})
+        for r in table:
+            yield r, context
 
     def scan_csv(self, step):
         source = step.source
@@ -135,98 +150,87 @@ class PythonExecutor:
                             types.append(type(ast.literal_eval(v)))
                         except (ValueError, SyntaxError):
                             types.append(str)
-                context.set_row(alias, tuple(t(v) for t, v in zip(types, row)))
-                yield context[alias], context
+                context.set_row(tuple(t(v) for t, v in zip(types, row)))
+                yield context.table.reader, context
 
     def join(self, step, context):
         source = step.name
 
-        join_context = self.context({source: context.tables[source]})
-
-        def merge_context(ctx, table):
-            # create a new context where all existing tables are mapped to a new one
-            return self.context({name: table for name in ctx.tables})
+        source_table = context.tables[source]
+        source_context = self.context({source: source_table})
+        column_ranges = {source: range(0, len(source_table.columns))}
 
         for name, join in step.joins.items():
-            join_context = self.context({**join_context.tables, name: context.tables[name]})
+            table = context.tables[name]
+            start = max(r.stop for r in column_ranges.values())
+            column_ranges[name] = range(start, len(table.columns) + start)
+            join_context = self.context({name: table})
 
             if join.get("source_key"):
-                table = self.hash_join(join, source, name, join_context)
+                table = self.hash_join(join, source_context, join_context)
             else:
-                table = self.nested_loop_join(join, source, name, join_context)
+                table = self.nested_loop_join(join, source_context, join_context)
 
-            join_context = merge_context(join_context, table)
+            source_context = self.context(
+                {
+                    name: Table(table.columns, table.rows, column_range)
+                    for name, column_range in column_ranges.items()
+                }
+            )
 
-        # apply projections or conditions
-        context = self.scan(step, join_context)
+        condition = self.generate(step.condition)
+        projections = self.generate_tuple(step.projections)
 
-        # use the scan context since it returns a single table
-        # otherwise there are no projections so all other tables are still in scope
-        if step.projections:
-            return context
+        if not condition and not projections:
+            return source_context
 
-        return merge_context(join_context, context.tables[source])
+        sink = self.table(step.projections if projections else source_context.columns)
 
-    def nested_loop_join(self, _join, a, b, context):
-        table = Table(context.tables[a].columns + context.tables[b].columns)
+        for reader, ctx in source_context:
+            if condition and not ctx.eval(condition):
+                continue
 
-        for reader_a, _ in context.table_iter(a):
-            for reader_b, _ in context.table_iter(b):
+            if projections:
+                sink.append(ctx.eval_tuple(projections))
+            else:
+                sink.append(reader.row)
+
+            if len(sink) >= step.limit:
+                break
+
+        if projections:
+            return self.context({step.name: sink})
+        else:
+            return self.context(
+                {
+                    name: Table(table.columns, sink.rows, table.column_range)
+                    for name, table in source_context.tables.items()
+                }
+            )
+
+    def nested_loop_join(self, _join, source_context, join_context):
+        table = Table(source_context.columns + join_context.columns)
+
+        for reader_a, _ in source_context:
+            for reader_b, _ in join_context:
                 table.append(reader_a.row + reader_b.row)
 
         return table
 
-    def hash_join(self, join, a, b, context):
-        a_key = self.generate_tuple(join["source_key"])
-        b_key = self.generate_tuple(join["join_key"])
+    def hash_join(self, join, source_context, join_context):
+        source_key = self.generate_tuple(join["source_key"])
+        join_key = self.generate_tuple(join["join_key"])
 
         results = collections.defaultdict(lambda: ([], []))
 
-        for reader, ctx in context.table_iter(a):
-            results[ctx.eval_tuple(a_key)][0].append(reader.row)
-        for reader, ctx in context.table_iter(b):
-            results[ctx.eval_tuple(b_key)][1].append(reader.row)
+        for reader, ctx in source_context:
+            results[ctx.eval_tuple(source_key)][0].append(reader.row)
+        for reader, ctx in join_context:
+            results[ctx.eval_tuple(join_key)][1].append(reader.row)
 
-        table = Table(context.tables[a].columns + context.tables[b].columns)
+        table = Table(source_context.columns + join_context.columns)
+
         for a_group, b_group in results.values():
-            for a_row, b_row in itertools.product(a_group, b_group):
-                table.append(a_row + b_row)
-
-        return table
-
-    def sort_merge_join(self, join, a, b, context):
-        a_key = self.generate_tuple(join["source_key"])
-        b_key = self.generate_tuple(join["join_key"])
-
-        context.sort(a, a_key)
-        context.sort(b, b_key)
-
-        a_i = 0
-        b_i = 0
-        a_n = len(context.tables[a])
-        b_n = len(context.tables[b])
-
-        table = Table(context.tables[a].columns + context.tables[b].columns)
-
-        def get_key(source, key, i):
-            context.set_index(source, i)
-            return context.eval_tuple(key)
-
-        while a_i < a_n and b_i < b_n:
-            key = min(get_key(a, a_key, a_i), get_key(b, b_key, b_i))
-
-            a_group = []
-
-            while a_i < a_n and key == get_key(a, a_key, a_i):
-                a_group.append(context[a].row)
-                a_i += 1
-
-            b_group = []
-
-            while b_i < b_n and key == get_key(b, b_key, b_i):
-                b_group.append(context[b].row)
-                b_i += 1
-
             for a_row, b_row in itertools.product(a_group, b_group):
                 table.append(a_row + b_row)
 
@@ -238,16 +242,18 @@ class PythonExecutor:
         aggregations = self.generate_tuple(step.aggregations)
         operands = self.generate_tuple(step.operands)
 
-        context.sort(source, group_by)
-
-        if step.operands:
+        if operands:
             source_table = context.tables[source]
             operand_table = Table(source_table.columns + self.table(step.operands).columns)
 
             for reader, ctx in context:
                 operand_table.append(reader.row + ctx.eval_tuple(operands))
 
-            context = self.context({source: operand_table})
+            context = self.context(
+                {None: operand_table, **{table: operand_table for table in context.tables}}
+            )
+
+        context.sort(group_by)
 
         group = None
         start = 0
@@ -256,29 +262,45 @@ class PythonExecutor:
         table = self.table(step.group + step.aggregations)
 
         for i in range(length):
-            context.set_index(source, i)
+            context.set_index(i)
             key = context.eval_tuple(group_by)
             group = key if group is None else group
             end += 1
-
+            if key != group:
+                context.set_range(start, end - 2)
+                table.append(group + context.eval_tuple(aggregations))
+                group = key
+                start = end - 2
             if i == length - 1:
-                context.set_range(source, start, end - 1)
-            elif key != group:
-                context.set_range(source, start, end - 2)
-            else:
-                continue
+                context.set_range(start, end - 1)
+                table.append(group + context.eval_tuple(aggregations))
 
-            table.append(group + context.eval_tuple(aggregations))
-            group = key
-            start = end - 2
+        context = self.context({step.name: table, **{name: table for name in context.tables}})
 
-        return self.scan(step, self.context({source: table}))
+        if step.projections:
+            return self.scan(step, context)
+        return context
 
     def sort(self, step, context):
-        table = list(context.tables)[0]
-        key = self.generate_tuple(step.key)
-        context.sort(table, key)
-        return self.scan(step, context)
+        projections = self.generate_tuple(step.projections)
+
+        sink = self.table(step.projections)
+
+        for reader, ctx in context:
+            sink.append(ctx.eval_tuple(projections))
+
+        context = self.context(
+            {
+                None: sink,
+                **{table: sink for table in context.tables},
+            }
+        )
+        context.sort(self.generate_tuple(step.key))
+
+        if not math.isinf(step.limit):
+            context.table.rows = context.table.rows[0 : step.limit]
+
+        return self.context({step.name: context.table})
 
 
 def _cast_py(self, expression):
@@ -293,7 +315,7 @@ def _cast_py(self, expression):
 
 
 def _column_py(self, expression):
-    table = self.sql(expression, "table")
+    table = self.sql(expression, "table") or None
     this = self.sql(expression, "this")
     return f"scope[{table}][{this}]"
 
@@ -319,10 +341,10 @@ def _ordered_py(self, expression):
 
 
 class Python(Dialect):
-    class Tokenizer(Tokenizer):
-        ESCAPE = "\\"
+    class Tokenizer(tokens.Tokenizer):
+        ESCAPES = ["\\"]
 
-    class Generator(Generator):
+    class Generator(generator.Generator):
         TRANSFORMS = {
             exp.Alias: lambda self, e: self.sql(e.this),
             exp.Array: inline_array_sql,

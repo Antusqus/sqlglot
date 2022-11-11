@@ -32,6 +32,9 @@ class Plan:
     def leaves(self):
         return (node for node, deps in self.dag.items() if not deps)
 
+    def __repr__(self):
+        return f"Plan\n----\n{repr(self.root)}"
+
 
 class Step:
     @classmethod
@@ -72,7 +75,9 @@ class Step:
         if from_:
             from_ = from_.expressions
             if len(from_) > 1:
-                raise UnsupportedError("Multi-from statements are unsupported. Run it through the optimizer")
+                raise UnsupportedError(
+                    "Multi-from statements are unsupported. Run it through the optimizer"
+                )
 
             step = Scan.from_expression(from_[0], ctes)
         else:
@@ -102,7 +107,7 @@ class Step:
                         continue
                     if operand not in operands:
                         operands[operand] = f"_a_{next(sequence)}"
-                    operand.replace(exp.column(operands[operand], step.name, quoted=True))
+                    operand.replace(exp.column(operands[operand], quoted=True))
             else:
                 projections.append(e)
 
@@ -117,9 +122,11 @@ class Step:
             aggregate = Aggregate()
             aggregate.source = step.name
             aggregate.name = step.name
-            aggregate.operands = tuple(alias(operand, alias_) for operand, alias_ in operands.items())
+            aggregate.operands = tuple(
+                alias(operand, alias_) for operand, alias_ in operands.items()
+            )
             aggregate.aggregations = aggregations
-            aggregate.group = [exp.column(e.alias_or_name, step.name, quoted=True) for e in group.expressions]
+            aggregate.group = group.expressions
             aggregate.add_dependency(step)
             step = aggregate
 
@@ -136,9 +143,6 @@ class Step:
             sort.key = order.expressions
             sort.add_dependency(step)
             step = sort
-            for k in sort.key + projections:
-                for column in k.find_all(exp.Column):
-                    column.set("table", exp.to_identifier(step.name, quoted=True))
 
         step.projections = projections
 
@@ -174,7 +178,7 @@ class Step:
             context = [f"{nested}Context:"] + context
 
         lines = [
-            f"{indent}- {self.__class__.__name__}: {self.name}",
+            f"{indent}- {self.id}",
             *context,
             f"{nested}Projections:",
         ]
@@ -192,6 +196,10 @@ class Step:
 
         return "\n".join(lines)
 
+    @property
+    def id(self):
+        return f"{self.__class__.__name__}: {self.name} ({id(self)})"
+
     def _to_s(self, _indent):
         return []
 
@@ -203,7 +211,9 @@ class Scan(Step):
         alias_ = expression.alias
 
         if not alias_:
-            raise UnsupportedError("Tables/Subqueries must be aliased. Run it through the optimizer")
+            raise UnsupportedError(
+                "Tables/Subqueries must be aliased. Run it through the optimizer"
+            )
 
         if isinstance(expression, exp.Subquery):
             table = expression.this
