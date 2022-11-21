@@ -57,6 +57,10 @@ def tsql_format_time_lambda(exp_class, full_format_mapping=None, default=None):
 
     return _format_time
 
+def _parse_concat(self):
+    self._match(TokenType.COMMA)
+    expression = f""
+
 
 def parse_format(args):
     fmt = seq_get(args, 1)
@@ -290,6 +294,7 @@ class TSQL(Dialect):
             this=self._parse_lambda(),
             separator=self._match(TokenType.COMMA) and self._parse_field(),
         ),
+        "CONCAT": rename_func("CONCAT_WS")
         }
     class Generator(generator.Generator):
         
@@ -310,6 +315,7 @@ class TSQL(Dialect):
 
             # TODO: Check Introducers concept in TSQL, to replace e.name with. For now, empty is good enough. 
             exp.Introducer: lambda self, e: f"""{str(e).replace(e.name, "")}""",
+            exp.ConcatWs: lambda self, e: f"""{str(e).replace(e.name, "POTATO")}""",
             exp.DateAdd: generate_date_delta_with_unit_sql,
             exp.DateDiff: generate_date_delta_with_unit_sql,
             exp.CurrentDate: rename_func("GETDATE"),
