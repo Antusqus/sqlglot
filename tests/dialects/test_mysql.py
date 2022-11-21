@@ -80,12 +80,12 @@ class TestMySQL(Validator):
 
     def test_introducers(self):
         self.validate_all(
-            "_utf8mb4 'hola'",
+            "_utf8mb4 ' '",
             read={
-                "mysql": "_utf8mb4'hola'",
+                "mysql": "_utf8mb4 ' '",
             },
             write={
-                "mysql": "_utf8mb4 'hola'",
+                "mysql": "_utf8mb4 ' '",
             },
         )
         self.validate_all(

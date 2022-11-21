@@ -57,6 +57,10 @@ def tsql_format_time_lambda(exp_class, full_format_mapping=None, default=None):
 
     return _format_time
 
+def _parse_concat(self):
+    self._match(TokenType.COMMA)
+    expression = f""
+
 
 def parse_format(args):
     fmt = seq_get(args, 1)
@@ -198,6 +202,7 @@ class TSQL(Dialect):
     }
 
     class Tokenizer(tokens.Tokenizer):
+        
         IDENTIFIERS = ['"', ("[", "]")]
 
         KEYWORDS = {
@@ -281,8 +286,18 @@ class TSQL(Dialect):
 
             # Entails a simple cast without any format requirement
             return self.expression(exp.Cast if strict else exp.TryCast, this=this, to=to)
-
+        
+        FUNCTION_PARSERS = {
+        **parser.Parser.FUNCTION_PARSERS,
+        "STRING_AGG": lambda self: self.expression(
+            exp.StrAgg,
+            this=self._parse_lambda(),
+            separator=self._match(TokenType.COMMA) and self._parse_field(),
+        ),
+        "CONCAT": rename_func("CONCAT_WS")
+        }
     class Generator(generator.Generator):
+        
         TYPE_MAPPING = {
             **generator.Generator.TYPE_MAPPING,
             exp.DataType.Type.BOOLEAN: "BIT",
@@ -294,6 +309,13 @@ class TSQL(Dialect):
 
         TRANSFORMS = {
             **generator.Generator.TRANSFORMS,  # type: ignore
+             exp.StrAgg: lambda self, e: f"""STRING_AGG({self.sql(e, "this")}, {self.sql(e, "separator") or "','"})""",
+            exp.GroupConcat: rename_func("STRING_AGG"),
+            exp.Length: lambda self, e: f"""LEN({self.sql(e, "this")})""",
+
+            # TODO: Check Introducers concept in TSQL, to replace e.name with. For now, empty is good enough. 
+            exp.Introducer: lambda self, e: f"""{str(e).replace(e.name, "")}""",
+            exp.ConcatWs: lambda self, e: f"""{str(e).replace(e.name, "POTATO")}""",
             exp.DateAdd: generate_date_delta_with_unit_sql,
             exp.DateDiff: generate_date_delta_with_unit_sql,
             exp.CurrentDate: rename_func("GETDATE"),

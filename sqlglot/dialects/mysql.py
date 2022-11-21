@@ -96,7 +96,6 @@ def _date_add_sql(kind):
 
     return func
 
-
 class MySQL(Dialect):
     # https://prestodb.io/docs/current/functions/datetime.html#mysql-date-functions
     time_mapping = {
@@ -196,6 +195,7 @@ class MySQL(Dialect):
                 this=self._parse_lambda(),
                 separator=self._match(TokenType.SEPARATOR) and self._parse_field(),
             ),
+            "SUBSTR": lambda self: self._parse_substring()
         }
 
         PROPERTY_PARSERS = {
