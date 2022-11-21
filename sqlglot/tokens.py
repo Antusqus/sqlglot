@@ -130,6 +130,7 @@ class TokenType(AutoName):
     COMMAND = auto()
     COMMENT = auto()
     COMMIT = auto()
+    COMPOUND = auto()
     CONSTRAINT = auto()
     CREATE = auto()
     CROSS = auto()
@@ -146,7 +147,9 @@ class TokenType(AutoName):
     DETERMINISTIC = auto()
     DISTINCT = auto()
     DISTINCT_FROM = auto()
+    DISTKEY = auto()
     DISTRIBUTE_BY = auto()
+    DISTSTYLE = auto()
     DIV = auto()
     DROP = auto()
     ELSE = auto()
@@ -253,6 +256,7 @@ class TokenType(AutoName):
     SHOW = auto()
     SIMILAR_TO = auto()
     SOME = auto()
+    SORTKEY = auto()
     SORT_BY = auto()
     STABLE = auto()
     STORED = auto()
@@ -413,7 +417,6 @@ class Tokenizer(metaclass=_Tokenizer):
 
     KEYWORDS = {
         "/*+": TokenType.HINT,
-        "*/": TokenType.HINT,
         "==": TokenType.EQ,
         "::": TokenType.DCOLON,
         "||": TokenType.DPIPE,
@@ -450,6 +453,7 @@ class Tokenizer(metaclass=_Tokenizer):
         "COLLATE": TokenType.COLLATE,
         "COMMENT": TokenType.SCHEMA_COMMENT,
         "COMMIT": TokenType.COMMIT,
+        "COMPOUND": TokenType.COMPOUND,
         "CONSTRAINT": TokenType.CONSTRAINT,
         "CREATE": TokenType.CREATE,
         "CROSS": TokenType.CROSS,
@@ -464,7 +468,9 @@ class Tokenizer(metaclass=_Tokenizer):
         "DETERMINISTIC": TokenType.DETERMINISTIC,
         "DISTINCT": TokenType.DISTINCT,
         "DISTINCT FROM": TokenType.DISTINCT_FROM,
+        "DISTKEY": TokenType.DISTKEY,
         "DISTRIBUTE BY": TokenType.DISTRIBUTE_BY,
+        "DISTSTYLE": TokenType.DISTSTYLE,
         "DIV": TokenType.DIV,
         "DROP": TokenType.DROP,
         "ELSE": TokenType.ELSE,
@@ -562,6 +568,7 @@ class Tokenizer(metaclass=_Tokenizer):
         "SET": TokenType.SET,
         "SHOW": TokenType.SHOW,
         "SOME": TokenType.SOME,
+        "SORTKEY": TokenType.SORTKEY,
         "SORT BY": TokenType.SORT_BY,
         "STABLE": TokenType.STABLE,
         "STORED": TokenType.STORED,
@@ -865,6 +872,7 @@ class Tokenizer(metaclass=_Tokenizer):
         if comment_start_line == self._prev_token_line:
             if self._prev_token_comment is None:
                 self.tokens[-1].comment = self._comment
+                self._prev_token_comment = self._comment
 
             self._comment = None
 

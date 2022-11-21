@@ -482,9 +482,9 @@ class TestExpressions(unittest.TestCase):
         self.assertEqual(column.text("expression"), "c")
         self.assertEqual(column.text("y"), "")
         self.assertEqual(parse_one("select * from x.y").find(exp.Table).text("db"), "x")
-        self.assertEqual(parse_one("select *").text("this"), "")
-        self.assertEqual(parse_one("1 + 1").text("this"), "1")
-        self.assertEqual(parse_one("'a'").text("this"), "a")
+        self.assertEqual(parse_one("select *").name, "")
+        self.assertEqual(parse_one("1 + 1").name, "1")
+        self.assertEqual(parse_one("'a'").name, "a")
 
     def test_alias(self):
         self.assertEqual(alias("foo", "bar").sql(), "foo AS bar")
@@ -525,24 +525,14 @@ class TestExpressions(unittest.TestCase):
             ),
             exp.Properties(
                 expressions=[
-                    exp.FileFormatProperty(
-                        this=exp.Literal.string("FORMAT"), value=exp.Literal.string("parquet")
-                    ),
+                    exp.FileFormatProperty(this=exp.Literal.string("parquet")),
                     exp.PartitionedByProperty(
-                        this=exp.Literal.string("PARTITIONED_BY"),
-                        value=exp.Tuple(
-                            expressions=[exp.to_identifier("a"), exp.to_identifier("b")]
-                        ),
+                        this=exp.Tuple(expressions=[exp.to_identifier("a"), exp.to_identifier("b")])
                     ),
-                    exp.AnonymousProperty(
-                        this=exp.Literal.string("custom"), value=exp.Literal.number(1)
-                    ),
-                    exp.TableFormatProperty(
-                        this=exp.Literal.string("TABLE_FORMAT"),
-                        value=exp.to_identifier("test_format"),
-                    ),
-                    exp.EngineProperty(this=exp.Literal.string("ENGINE"), value=exp.NULL),
-                    exp.CollateProperty(this=exp.Literal.string("COLLATE"), value=exp.TRUE),
+                    exp.Property(this=exp.Literal.string("custom"), value=exp.Literal.number(1)),
+                    exp.TableFormatProperty(this=exp.to_identifier("test_format")),
+                    exp.EngineProperty(this=exp.null()),
+                    exp.CollateProperty(this=exp.true()),
                 ]
             ),
         )

@@ -58,16 +58,16 @@ class Generator:
     """
 
     TRANSFORMS = {
-        exp.CharacterSetProperty: lambda self, e: f"{'DEFAULT ' if e.args['default'] else ''}CHARACTER SET={self.sql(e, 'value')}",
         exp.DateAdd: lambda self, e: f"DATE_ADD({self.format_args(e.this, e.expression, e.args.get('unit'))})",
         exp.DateDiff: lambda self, e: f"DATEDIFF({self.format_args(e.this, e.expression)})",
         exp.TsOrDsAdd: lambda self, e: f"TS_OR_DS_ADD({self.format_args(e.this, e.expression, e.args.get('unit'))})",
         exp.VarMap: lambda self, e: f"MAP({self.format_args(e.args['keys'], e.args['values'])})",
+        exp.CharacterSetProperty: lambda self, e: f"{'DEFAULT ' if e.args['default'] else ''}CHARACTER SET={self.sql(e, 'this')}",
         exp.LanguageProperty: lambda self, e: self.naked_property(e),
         exp.LocationProperty: lambda self, e: self.naked_property(e),
         exp.ReturnsProperty: lambda self, e: self.naked_property(e),
         exp.ExecuteAsProperty: lambda self, e: self.naked_property(e),
-        exp.VolatilityProperty: lambda self, e: self.sql(e.name),
+        exp.VolatilityProperty: lambda self, e: e.name,
     }
 
     # Whether 'CREATE ... TRANSIENT ... TABLE' is allowed
@@ -94,10 +94,13 @@ class Generator:
     ROOT_PROPERTIES = {
         exp.ReturnsProperty,
         exp.LanguageProperty,
+        exp.DistStyleProperty,
+        exp.DistKeyProperty,
+        exp.SortKeyProperty,
     }
 
     WITH_PROPERTIES = {
-        exp.AnonymousProperty,
+        exp.Property,
         exp.FileFormatProperty,
         exp.PartitionedByProperty,
         exp.TableFormatProperty,
@@ -241,7 +244,7 @@ class Generator:
         if not NEWLINE_RE.search(comment):
             return f"{sql} --{comment.rstrip()}" if single_line else f"{sql} /*{comment}*/"
 
-        return f"/*{comment}*/\n{sql}"
+        return f"/*{comment}*/\n{sql}" if sql else f" /*{comment}*/"
 
     def wrap(self, expression):
         this_sql = self.indent(
@@ -543,36 +546,28 @@ class Generator:
 
     def root_properties(self, properties):
         if properties.expressions:
-            return self.sep() + self.expressions(
-                properties,
-                indent=False,
-                sep=" ",
-            )
+            return self.sep() + self.expressions(properties, indent=False, sep=" ")
         return ""
 
     def properties(self, properties, prefix="", sep=", "):
         if properties.expressions:
-            expressions = self.expressions(
-                properties,
-                sep=sep,
-                indent=False,
-            )
+            expressions = self.expressions(properties, sep=sep, indent=False)
             return f"{self.seg(prefix)}{' ' if prefix else ''}{self.wrap(expressions)}"
         return ""
 
     def with_properties(self, properties):
-        return self.properties(
-            properties,
-            prefix="WITH",
-        )
+        return self.properties(properties, prefix="WITH")
 
     def property_sql(self, expression):
-        if isinstance(expression.this, exp.Literal):
-            key = expression.this.this
-        else:
-            key = expression.name
-        value = self.sql(expression, "value")
-        return f"{key}={value}"
+        property_cls = expression.__class__
+        if property_cls == exp.Property:
+            return f"{expression.name}={self.sql(expression, 'value')}"
+
+        property_name = exp.Properties.PROPERTY_TO_NAME.get(property_cls)
+        if not property_name:
+            self.unsupported(f"Unsupported property {property_name}")
+
+        return f"{property_name}={self.sql(expression, 'this')}"
 
     def insert_sql(self, expression):
         overwrite = expression.args.get("overwrite")
@@ -916,12 +911,14 @@ class Generator:
     def subquery_sql(self, expression):
         alias = self.sql(expression, "alias")
 
-        return self.query_modifiers(
+        sql = self.query_modifiers(
             expression,
             self.wrap(expression),
             self.expressions(expression, key="pivots", sep=" "),
             f" AS {alias}" if alias else "",
         )
+
+        return self.prepend_ctes(expression, sql)
 
     def qualify_sql(self, expression):
         this = self.indent(self.sql(expression, "this"))
@@ -1112,9 +1109,12 @@ class Generator:
 
     def paren_sql(self, expression):
         if isinstance(expression.unnest(), exp.Select):
-            return self.wrap(expression)
-        sql = self.seg(self.indent(self.sql(expression, "this")), sep="")
-        return f"({sql}{self.seg(')', sep='')}"
+            sql = self.wrap(expression)
+        else:
+            sql = self.seg(self.indent(self.sql(expression, "this")), sep="")
+            sql = f"({sql}{self.seg(')', sep='')}"
+
+        return self.prepend_ctes(expression, sql)
 
     def neg_sql(self, expression):
         return f"-{self.sql(expression, 'this')}"
@@ -1174,6 +1174,9 @@ class Generator:
         zone = self.sql(expression, "this")
         return f"CURRENT_DATE({zone})" if zone else "CURRENT_DATE"
 
+    def collate_sql(self, expression):
+        return self.binary(expression, "COLLATE")
+
     def command_sql(self, expression):
         return f"{self.sql(expression, 'this').upper()} {expression.text('expression').strip()}"
 
@@ -1205,10 +1208,7 @@ class Generator:
     def intdiv_sql(self, expression):
         return self.sql(
             exp.Cast(
-                this=exp.Div(
-                    this=expression.args["this"],
-                    expression=expression.args["expression"],
-                ),
+                this=exp.Div(this=expression.this, expression=expression.expression),
                 to=exp.DataType(this=exp.DataType.Type.INT),
             )
         )
@@ -1346,7 +1346,10 @@ class Generator:
         return f"{self.seg(op)}{self.sep() if expressions_sql else ''}{expressions_sql}"
 
     def naked_property(self, expression):
-        return f"{expression.name} {self.sql(expression, 'value')}"
+        property_name = exp.Properties.PROPERTY_TO_NAME.get(expression.__class__)
+        if not property_name:
+            self.unsupported(f"Unsupported property {expression.__class__.__name__}")
+        return f"{property_name} {self.sql(expression, 'this')}"
 
     def set_operation(self, expression, op):
         this = self.sql(expression, "this")

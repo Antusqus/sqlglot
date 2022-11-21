@@ -5,7 +5,7 @@ import typing as t
 
 from sqlglot import expressions as exp
 from sqlglot.errors import SchemaError
-from sqlglot.helper import csv_reader, dict_depth
+from sqlglot.helper import dict_depth
 from sqlglot.trie import in_trie, new_trie
 
 if t.TYPE_CHECKING:
@@ -76,14 +76,14 @@ class AbstractMappingSchema(t.Generic[T]):
         self.mapping_trie = self._build_trie(self.mapping)
         self._supported_table_args: t.Tuple[str, ...] = tuple()
 
-    def _build_trie(self, schema: t.Dict):
+    def _build_trie(self, schema: t.Dict) -> t.Dict:
         return new_trie(tuple(reversed(t)) for t in flatten_schema(schema, depth=self._depth()))
 
-    def _depth(self):
+    def _depth(self) -> int:
         return dict_depth(self.mapping)
 
     @property
-    def supported_table_args(self):
+    def supported_table_args(self) -> t.Tuple[str, ...]:
         if not self._supported_table_args and self.mapping:
             depth = self._depth()
 
@@ -97,6 +97,8 @@ class AbstractMappingSchema(t.Generic[T]):
         return self._supported_table_args
 
     def table_parts(self, table: exp.Table) -> t.List[str]:
+        if isinstance(table.this, exp.ReadCSV):
+            return [table.this.name]
         return [table.text(part) for part in TABLE_ARGS if table.text(part)]
 
     def find(
@@ -158,7 +160,9 @@ class MappingSchema(AbstractMappingSchema[t.Dict[str, str]], Schema):
         super().__init__(schema)
         self.visible = visible or {}
         self.dialect = dialect
-        self._type_mapping_cache: t.Dict[str, exp.DataType.Type] = {}
+        self._type_mapping_cache: t.Dict[str, exp.DataType.Type] = {
+            "STR": exp.DataType.Type.TEXT,
+        }
 
     @classmethod
     def from_mapping_schema(cls, mapping_schema: MappingSchema) -> MappingSchema:
@@ -216,10 +220,6 @@ class MappingSchema(AbstractMappingSchema[t.Dict[str, str]], Schema):
 
     def column_names(self, table: exp.Table | str, only_visible: bool = False) -> t.List[str]:
         table_ = self._ensure_table(table)
-
-        if not isinstance(table_.this, exp.Identifier):
-            return fs_get(table)  # type: ignore
-
         schema = self.find(table_)
 
         if schema is None:
@@ -302,16 +302,6 @@ def flatten_schema(
         elif depth == 1:
             tables.append(keys + [k])
     return tables
-
-
-def fs_get(table: exp.Table) -> t.List[str]:
-    name = table.this.name
-
-    if name.upper() == "READ_CSV":
-        with csv_reader(table) as reader:
-            return next(reader)
-
-    raise ValueError(f"Cannot read schema for {table}")
 
 
 def _nested_get(

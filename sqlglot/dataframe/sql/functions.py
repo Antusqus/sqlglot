@@ -757,11 +757,15 @@ def concat_ws(sep: str, *cols: ColumnOrName) -> Column:
 
 
 def decode(col: ColumnOrName, charset: str) -> Column:
-    return Column.invoke_anonymous_function(col, "DECODE", lit(charset))
+    return Column.invoke_expression_over_column(
+        col, glotexp.Decode, charset=glotexp.Literal.string(charset)
+    )
 
 
 def encode(col: ColumnOrName, charset: str) -> Column:
-    return Column.invoke_anonymous_function(col, "ENCODE", lit(charset))
+    return Column.invoke_expression_over_column(
+        col, glotexp.Encode, charset=glotexp.Literal.string(charset)
+    )
 
 
 def format_number(col: ColumnOrName, d: int) -> Column:
@@ -867,11 +871,11 @@ def bin(col: ColumnOrName) -> Column:
 
 
 def hex(col: ColumnOrName) -> Column:
-    return Column.invoke_anonymous_function(col, "HEX")
+    return Column.invoke_expression_over_column(col, glotexp.Hex)
 
 
 def unhex(col: ColumnOrName) -> Column:
-    return Column.invoke_anonymous_function(col, "UNHEX")
+    return Column.invoke_expression_over_column(col, glotexp.Unhex)
 
 
 def length(col: ColumnOrName) -> Column:
@@ -939,11 +943,7 @@ def array_join(
 
 
 def concat(*cols: ColumnOrName) -> Column:
-    if len(cols) == 1:
-        return Column.invoke_anonymous_function(cols[0], "CONCAT")
-    return Column.invoke_anonymous_function(
-        cols[0], "CONCAT", *[Column.ensure_col(x).expression for x in cols[1:]]
-    )
+    return Column.invoke_expression_over_column(None, glotexp.Concat, expressions=cols)
 
 
 def array_position(col: ColumnOrName, value: ColumnOrLiteral) -> Column:

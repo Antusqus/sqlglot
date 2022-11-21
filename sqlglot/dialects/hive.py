@@ -7,11 +7,13 @@ from sqlglot.dialects.dialect import (
     create_with_partitions_sql,
     format_time_lambda,
     if_sql,
+    locate_to_strposition,
     no_ilike_sql,
     no_recursive_cte_sql,
     no_safe_divide_sql,
     no_trycast_sql,
     rename_func,
+    strposition_to_local_sql,
     struct_extract_sql,
     var_map_sql,
 )
@@ -59,9 +61,7 @@ def _array_sort(self, expression):
 
 
 def _property_sql(self, expression):
-    key = expression.name
-    value = self.sql(expression, "value")
-    return f"'{key}'={value}"
+    return f"'{expression.name}'={self.sql(expression, 'value')}"
 
 
 def _str_to_unix(self, expression):
@@ -220,11 +220,7 @@ class Hive(Dialect):
             "DAY": lambda args: exp.Day(this=exp.TsOrDsToDate(this=seq_get(args, 0))),
             "FROM_UNIXTIME": format_time_lambda(exp.UnixToStr, "hive", True),
             "GET_JSON_OBJECT": exp.JSONExtractScalar.from_arg_list,
-            "LOCATE": lambda args: exp.StrPosition(
-                this=seq_get(args, 1),
-                substr=seq_get(args, 0),
-                position=seq_get(args, 2),
-            ),
+            "LOCATE": locate_to_strposition,
             "LOG": (
                 lambda args: exp.Log.from_arg_list(args)
                 if len(args) > 1
@@ -252,7 +248,7 @@ class Hive(Dialect):
         TRANSFORMS = {
             **generator.Generator.TRANSFORMS,
             **transforms.UNALIAS_GROUP,  # type: ignore
-            exp.AnonymousProperty: _property_sql,
+            exp.Property: _property_sql,
             exp.ApproxDistinct: approx_count_distinct_sql,
             exp.ArrayAgg: rename_func("COLLECT_LIST"),
             exp.ArrayConcat: rename_func("CONCAT"),
@@ -264,7 +260,7 @@ class Hive(Dialect):
             exp.DateStrToDate: rename_func("TO_DATE"),
             exp.DateToDi: lambda self, e: f"CAST(DATE_FORMAT({self.sql(e, 'this')}, {Hive.dateint_format}) AS INT)",
             exp.DiToDate: lambda self, e: f"TO_DATE(CAST({self.sql(e, 'this')} AS STRING), {Hive.dateint_format})",
-            exp.FileFormatProperty: lambda self, e: f"STORED AS {e.text('value').upper()}",
+            exp.FileFormatProperty: lambda self, e: f"STORED AS {e.name.upper()}",
             exp.If: if_sql,
             exp.Index: _index_sql,
             exp.ILike: no_ilike_sql,
@@ -282,12 +278,12 @@ class Hive(Dialect):
             exp.SchemaCommentProperty: lambda self, e: self.naked_property(e),
             exp.SetAgg: rename_func("COLLECT_SET"),
             exp.Split: lambda self, e: f"SPLIT({self.sql(e, 'this')}, CONCAT('\\\\Q', {self.sql(e, 'expression')}))",
-            exp.StrPosition: lambda self, e: f"LOCATE({self.format_args(e.args.get('substr'), e.this, e.args.get('position'))})",
+            exp.StrPosition: strposition_to_local_sql,
             exp.StrToDate: _str_to_date,
             exp.StrToTime: _str_to_time,
             exp.StrToUnix: _str_to_unix,
             exp.StructExtract: struct_extract_sql,
-            exp.TableFormatProperty: lambda self, e: f"USING {self.sql(e, 'value')}",
+            exp.TableFormatProperty: lambda self, e: f"USING {self.sql(e, 'this')}",
             exp.TimeStrToDate: rename_func("TO_DATE"),
             exp.TimeStrToTime: lambda self, e: f"CAST({self.sql(e, 'this')} AS TIMESTAMP)",
             exp.TimeStrToUnix: rename_func("UNIX_TIMESTAMP"),
@@ -300,11 +296,11 @@ class Hive(Dialect):
             exp.UnixToStr: lambda self, e: f"FROM_UNIXTIME({self.format_args(e.this, _time_format(self, e))})",
             exp.UnixToTime: rename_func("FROM_UNIXTIME"),
             exp.UnixToTimeStr: rename_func("FROM_UNIXTIME"),
-            exp.PartitionedByProperty: lambda self, e: f"PARTITIONED BY {self.sql(e, 'value')}",
+            exp.PartitionedByProperty: lambda self, e: f"PARTITIONED BY {self.sql(e, 'this')}",
             exp.NumberToStr: rename_func("FORMAT_NUMBER"),
         }
 
-        WITH_PROPERTIES = {exp.AnonymousProperty}
+        WITH_PROPERTIES = {exp.Property}
 
         ROOT_PROPERTIES = {
             exp.PartitionedByProperty,

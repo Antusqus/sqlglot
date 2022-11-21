@@ -33,6 +33,7 @@ class Dialects(str, Enum):
     TRINO = "trino"
     TSQL = "tsql"
     DATABRICKS = "databricks"
+    DRILL = "drill"
 
 
 class _Dialect(type):
@@ -336,18 +337,13 @@ def create_with_partitions_sql(self, expression):
     if has_schema and is_partitionable:
         expression = expression.copy()
         prop = expression.find(exp.PartitionedByProperty)
-        value = prop and prop.args.get("value")
-        if prop and not isinstance(value, exp.Schema):
+        this = prop and prop.this
+        if prop and not isinstance(this, exp.Schema):
             schema = expression.this
-            columns = {v.name.upper() for v in value.expressions}
+            columns = {v.name.upper() for v in this.expressions}
             partitions = [col for col in schema.expressions if col.name.upper() in columns]
-            schema.set(
-                "expressions",
-                [e for e in schema.expressions if e not in partitions],
-            )
-            prop.replace(
-                exp.PartitionedByProperty(this=prop.this, value=exp.Schema(expressions=partitions))
-            )
+            schema.set("expressions", [e for e in schema.expressions if e not in partitions])
+            prop.replace(exp.PartitionedByProperty(this=exp.Schema(expressions=partitions)))
             expression.set("this", schema)
 
     return self.create_sql(expression)
@@ -363,3 +359,18 @@ def parse_date_delta(exp_class, unit_mapping=None):
         return exp_class(this=this, expression=expression, unit=unit)
 
     return inner_func
+
+
+def locate_to_strposition(args):
+    return exp.StrPosition(
+        this=seq_get(args, 1),
+        substr=seq_get(args, 0),
+        position=seq_get(args, 2),
+    )
+
+
+def strposition_to_local_sql(self, expression):
+    args = self.format_args(
+        expression.args.get("substr"), expression.this, expression.args.get("position")
+    )
+    return f"LOCATE({args})"

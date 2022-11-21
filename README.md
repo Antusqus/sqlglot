@@ -25,6 +25,7 @@ Contributions are very welcome in SQLGlot; read the [contribution guide](https:/
    * [AST Introspection](#ast-introspection)
    * [AST Diff](#ast-diff)
    * [Custom Dialects](#custom-dialects)
+   * [SQL Execution](#sql-execution)
 * [Benchmarks](#benchmarks)
 * [Optional Dependencies](#optional-dependencies)
 
@@ -372,16 +373,63 @@ print(Dialect["custom"])
 <class '__main__.Custom'>
 ```
 
+### SQL Execution
+
+One can even interpret SQL queries using SQLGlot, where the tables are represented as Python dictionaries. Although the engine is not very fast (it's not supposed to be) and is in a relatively early stage of development, it can be useful for unit testing and running SQL natively across Python objects. Additionally, the foundation can be easily integrated with fast compute kernels (arrow, pandas). Below is an example showcasing the execution of a SELECT expression that involves aggregations and JOINs:
+
+```python
+from sqlglot.executor import execute
+
+tables = {
+    "sushi": [
+        {"id": 1, "price": 1.0},
+        {"id": 2, "price": 2.0},
+        {"id": 3, "price": 3.0},
+    ],
+    "order_items": [
+        {"sushi_id": 1, "order_id": 1},
+        {"sushi_id": 1, "order_id": 1},
+        {"sushi_id": 2, "order_id": 1},
+        {"sushi_id": 3, "order_id": 2},
+    ],
+    "orders": [
+        {"id": 1, "user_id": 1},
+        {"id": 2, "user_id": 2},
+    ],
+}
+
+execute(
+    """
+    SELECT
+      o.user_id,
+      SUM(s.price) AS price
+    FROM orders o
+    JOIN order_items i
+      ON o.id = i.order_id
+    JOIN sushi s
+      ON i.sushi_id = s.id
+    GROUP BY o.user_id
+    """,
+    tables=tables
+)
+```
+
+```python
+user_id price
+      1   4.0
+      2   3.0
+```
+
 ## Benchmarks
 
 [Benchmarks](benchmarks) run on Python 3.10.5 in seconds.
 
-|           Query |         sqlglot |         sqltree |        sqlparse |  moz_sql_parser |        sqloxide |
-| --------------- | --------------- | --------------- | --------------- | --------------- | --------------- |
-|            tpch |   0.01178 (1.0) | 0.01173 (0.995) | 0.04676 (3.966) | 0.06800 (5.768) | 0.00094 (0.080) |
-|           short |   0.00084 (1.0) | 0.00079 (0.948) | 0.00296 (3.524) | 0.00443 (5.266) | 0.00006 (0.072) |
-|            long |   0.01102 (1.0) | 0.01044 (0.947) | 0.04349 (3.945) | 0.05998 (5.440) | 0.00084 (0.077) |
-|           crazy |   0.03751 (1.0) | 0.03471 (0.925) | 11.0796 (295.3) | 1.03355 (27.55) | 0.00529 (0.141) |
+|           Query |         sqlglot |        sqlfluff |         sqltree |        sqlparse |  moz_sql_parser |        sqloxide |
+| --------------- | --------------- | --------------- | --------------- | --------------- | --------------- | --------------- |
+|            tpch |   0.01308 (1.0) | 1.60626 (122.7) | 0.01168 (0.893) | 0.04958 (3.791) | 0.08543 (6.531) | 0.00136 (0.104) |
+|           short |   0.00109 (1.0) | 0.14134 (129.2) | 0.00099 (0.906) | 0.00342 (3.131) | 0.00652 (5.970) | 8.76621 (0.080) |
+|            long |   0.01399 (1.0) | 2.12632 (151.9) | 0.01126 (0.805) | 0.04410 (3.151) | 0.06671 (4.767) | 0.00107 (0.076) |
+|           crazy |   0.03969 (1.0) | 24.3777 (614.1) | 0.03917 (0.987) | 11.7043 (294.8) | 1.03280 (26.02) | 0.00625 (0.157) |
 
 
 ## Optional Dependencies

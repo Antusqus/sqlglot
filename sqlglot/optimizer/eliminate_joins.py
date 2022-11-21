@@ -128,8 +128,8 @@ def join_condition(join):
             Tuple of (source key, join key, remaining predicate)
     """
     name = join.this.alias_or_name
-    on = join.args.get("on") or exp.TRUE
-    on = on.copy()
+    on = (join.args.get("on") or exp.true()).copy()
+    on = on if isinstance(on, exp.And) else exp.and_(on, exp.true())
     source_key = []
     join_key = []
 
@@ -141,7 +141,7 @@ def join_condition(join):
     #
     # should pull y.b as the join key and x.a as the source key
     if normalized(on):
-        for condition in on.flatten() if isinstance(on, exp.And) else [on]:
+        for condition in on.flatten():
             if isinstance(condition, exp.EQ):
                 left, right = condition.unnest_operands()
                 left_tables = exp.column_table_names(left)
@@ -150,13 +150,12 @@ def join_condition(join):
                 if name in left_tables and name not in right_tables:
                     join_key.append(left)
                     source_key.append(right)
-                    condition.replace(exp.TRUE)
+                    condition.replace(exp.true())
                 elif name in right_tables and name not in left_tables:
                     join_key.append(right)
                     source_key.append(left)
-                    condition.replace(exp.TRUE)
+                    condition.replace(exp.true())
 
     on = simplify(on)
-    remaining_condition = None if on == exp.TRUE else on
-
+    remaining_condition = None if on == exp.true() else on
     return source_key, join_key, remaining_condition

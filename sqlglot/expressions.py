@@ -641,9 +641,11 @@ class Set(Expression):
 
 class SetItem(Expression):
     arg_types = {
-        "this": True,
+        "this": False,
+        "expressions": False,
         "kind": False,
         "collate": False,  # MySQL SET NAMES statement
+        "global": False,
     }
 
 
@@ -1063,55 +1065,63 @@ class Property(Expression):
 
 
 class TableFormatProperty(Property):
-    pass
+    arg_types = {"this": True}
 
 
 class PartitionedByProperty(Property):
-    pass
+    arg_types = {"this": True}
 
 
 class FileFormatProperty(Property):
-    pass
+    arg_types = {"this": True}
+
+
+class DistKeyProperty(Property):
+    arg_types = {"this": True}
+
+
+class SortKeyProperty(Property):
+    arg_types = {"this": True, "compound": False}
+
+
+class DistStyleProperty(Property):
+    arg_types = {"this": True}
 
 
 class LocationProperty(Property):
-    pass
+    arg_types = {"this": True}
 
 
 class EngineProperty(Property):
-    pass
+    arg_types = {"this": True}
 
 
 class AutoIncrementProperty(Property):
-    pass
+    arg_types = {"this": True}
 
 
 class CharacterSetProperty(Property):
-    arg_types = {"this": True, "value": True, "default": True}
+    arg_types = {"this": True, "default": True}
 
 
 class CollateProperty(Property):
-    pass
+    arg_types = {"this": True}
 
 
 class SchemaCommentProperty(Property):
-    pass
-
-
-class AnonymousProperty(Property):
-    pass
+    arg_types = {"this": True}
 
 
 class ReturnsProperty(Property):
-    arg_types = {"this": True, "value": True, "is_table": False}
+    arg_types = {"this": True, "is_table": False}
 
 
 class LanguageProperty(Property):
-    pass
+    arg_types = {"this": True}
 
 
 class ExecuteAsProperty(Property):
-    pass
+    arg_types = {"this": True}
 
 
 class VolatilityProperty(Property):
@@ -1121,24 +1131,36 @@ class VolatilityProperty(Property):
 class Properties(Expression):
     arg_types = {"expressions": True}
 
-    PROPERTY_KEY_MAPPING = {
+    NAME_TO_PROPERTY = {
         "AUTO_INCREMENT": AutoIncrementProperty,
-        "CHARACTER_SET": CharacterSetProperty,
+        "CHARACTER SET": CharacterSetProperty,
         "COLLATE": CollateProperty,
         "COMMENT": SchemaCommentProperty,
+        "DISTKEY": DistKeyProperty,
+        "DISTSTYLE": DistStyleProperty,
         "ENGINE": EngineProperty,
+        "EXECUTE AS": ExecuteAsProperty,
         "FORMAT": FileFormatProperty,
+        "LANGUAGE": LanguageProperty,
         "LOCATION": LocationProperty,
         "PARTITIONED_BY": PartitionedByProperty,
+        "RETURNS": ReturnsProperty,
+        "SORTKEY": SortKeyProperty,
         "TABLE_FORMAT": TableFormatProperty,
     }
+
+    PROPERTY_TO_NAME = {v: k for k, v in NAME_TO_PROPERTY.items()}
 
     @classmethod
     def from_dict(cls, properties_dict) -> Properties:
         expressions = []
         for key, value in properties_dict.items():
-            property_cls = cls.PROPERTY_KEY_MAPPING.get(key.upper(), AnonymousProperty)
-            expressions.append(property_cls(this=Literal.string(key), value=convert(value)))
+            property_cls = cls.NAME_TO_PROPERTY.get(key.upper())
+            if property_cls:
+                expressions.append(property_cls(this=convert(value)))
+            else:
+                expressions.append(Property(this=Literal.string(key), value=convert(value)))
+
         return cls(expressions=expressions)
 
 
@@ -1742,7 +1764,7 @@ class Select(Subqueryable):
             )
 
         if join_alias:
-            join.set("this", alias_(join.args["this"], join_alias, table=True))
+            join.set("this", alias_(join.this, join_alias, table=True))
         return _apply_list_builder(
             join,
             instance=self,
@@ -1885,6 +1907,7 @@ class Subquery(DerivedTable, Unionable):
     arg_types = {
         "this": True,
         "alias": False,
+        "with": False,
         **QUERY_MODIFIERS,
     }
 
@@ -2025,6 +2048,31 @@ class DataType(Expression):
         OBJECT = auto()
         NULL = auto()
         UNKNOWN = auto()  # Sentinel value, useful for type annotation
+
+    TEXT_TYPES = {
+        Type.CHAR,
+        Type.NCHAR,
+        Type.VARCHAR,
+        Type.NVARCHAR,
+        Type.TEXT,
+    }
+
+    NUMERIC_TYPES = {
+        Type.INT,
+        Type.TINYINT,
+        Type.SMALLINT,
+        Type.BIGINT,
+        Type.FLOAT,
+        Type.DOUBLE,
+    }
+
+    TEMPORAL_TYPES = {
+        Type.TIMESTAMP,
+        Type.TIMESTAMPTZ,
+        Type.TIMESTAMPLTZ,
+        Type.DATE,
+        Type.DATETIME,
+    }
 
     @classmethod
     def build(cls, dtype, **kwargs) -> DataType:
@@ -2225,7 +2273,7 @@ class Not(Unary, Condition):
 
 
 class Paren(Unary, Condition):
-    pass
+    arg_types = {"this": True, "with": False}
 
 
 class Neg(Unary):
@@ -2438,6 +2486,10 @@ class Cast(Func):
         return self.args["to"]
 
 
+class Collate(Binary):
+    pass
+
+
 class TryCast(Cast):
     pass
 
@@ -2452,13 +2504,17 @@ class Coalesce(Func):
     is_var_len_args = True
 
 
-class ConcatWs(Func):
-    arg_types = {"expressions": False}
+class Concat(Func):
+    arg_types = {"expressions": True}
     is_var_len_args = True
 
 
+class ConcatWs(Concat):
+    _sql_names = ["CONCAT_WS"]
+
+
 class Count(AggFunc):
-    pass
+    arg_types = {"this": False}
 
 
 class CurrentDate(Func):
@@ -2566,8 +2622,16 @@ class Day(Func):
     pass
 
 
+class Decode(Func):
+    arg_types = {"this": True, "charset": True}
+
+
 class DiToDate(Func):
     pass
+
+
+class Encode(Func):
+    arg_types = {"this": True, "charset": True}
 
 
 class Exp(Func):
@@ -2589,6 +2653,10 @@ class Greatest(Func):
 
 class GroupConcat(Func):
     arg_types = {"this": True, "separator": False}
+
+
+class Hex(Func):
+    pass
 
 
 class If(Func):
@@ -2651,7 +2719,7 @@ class Log10(Func):
 
 
 class Lower(Func):
-    pass
+    _sql_names = ["LOWER", "LCASE"]
 
 
 class Map(Func):
@@ -2694,6 +2762,12 @@ class Quantile(AggFunc):
 
 class ApproxQuantile(Quantile):
     arg_types = {"this": True, "quantile": True, "accuracy": False}
+
+
+class ReadCSV(Func):
+    _sql_names = ["READ_CSV"]
+    is_var_len_args = True
+    arg_types = {"this": True, "expressions": False}
 
 
 class Reduce(Func):
@@ -2816,8 +2890,8 @@ class TimeStrToUnix(Func):
 class Trim(Func):
     arg_types = {
         "this": True,
-        "position": False,
         "expression": False,
+        "position": False,
         "collation": False,
     }
 
@@ -2838,6 +2912,10 @@ class TsOrDiToDi(Func):
     pass
 
 
+class Unhex(Func):
+    pass
+
+
 class UnixToStr(Func):
     arg_types = {"this": True, "format": False}
 
@@ -2855,7 +2933,7 @@ class UnixToTimeStr(Func):
 
 
 class Upper(Func):
-    pass
+    _sql_names = ["UPPER", "UCASE"]
 
 
 class Variance(AggFunc):
@@ -3713,6 +3791,19 @@ def replace_placeholders(expression, *args, **kwargs):
     return expression.transform(_replace_placeholders, iter(args), **kwargs)
 
 
+def true():
+    return Boolean(this=True)
+
+
+def false():
+    return Boolean(this=False)
+
+
+def null():
+    return Null()
+
+
+# TODO: deprecate this
 TRUE = Boolean(this=True)
 FALSE = Boolean(this=False)
 NULL = Null()
