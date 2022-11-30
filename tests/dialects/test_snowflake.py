@@ -172,13 +172,28 @@ class TestSnowflake(Validator):
         self.validate_all(
             "trim(date_column, 'UTC')",
             write={
+                "bigquery": "TRIM(date_column, 'UTC')",
                 "snowflake": "TRIM(date_column, 'UTC')",
                 "postgres": "TRIM('UTC' FROM date_column)",
             },
         )
         self.validate_all(
             "trim(date_column)",
-            write={"snowflake": "TRIM(date_column)"},
+            write={
+                "snowflake": "TRIM(date_column)",
+                "bigquery": "TRIM(date_column)",
+            },
+        )
+        self.validate_all(
+            "DECODE(x, a, b, c, d)",
+            read={
+                "": "MATCHES(x, a, b, c, d)",
+            },
+            write={
+                "": "MATCHES(x, a, b, c, d)",
+                "oracle": "DECODE(x, a, b, c, d)",
+                "snowflake": "DECODE(x, a, b, c, d)",
+            },
         )
 
     def test_null_treatment(self):
@@ -370,7 +385,8 @@ class TestSnowflake(Validator):
         )
 
         self.validate_all(
-            r"""SELECT * FROM TABLE(?)""", write={"snowflake": r"""SELECT * FROM TABLE(?)"""}
+            r"""SELECT * FROM TABLE(?)""",
+            write={"snowflake": r"""SELECT * FROM TABLE(?)"""},
         )
 
         self.validate_all(

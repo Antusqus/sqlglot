@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlglot import exp
+from sqlglot import exp, transforms
 from sqlglot.dialects.postgres import Postgres
 from sqlglot.tokens import TokenType
 
@@ -18,12 +18,14 @@ class Redshift(Postgres):
 
         KEYWORDS = {
             **Postgres.Tokenizer.KEYWORDS,  # type: ignore
+            "COPY": TokenType.COMMAND,
             "GEOMETRY": TokenType.GEOMETRY,
             "GEOGRAPHY": TokenType.GEOGRAPHY,
             "HLLSKETCH": TokenType.HLLSKETCH,
             "SUPER": TokenType.SUPER,
             "TIME": TokenType.TIMESTAMP,
             "TIMETZ": TokenType.TIMESTAMPTZ,
+            "UNLOAD": TokenType.COMMAND,
             "VARBYTE": TokenType.VARBINARY,
             "SIMILAR TO": TokenType.SIMILAR_TO,
         }
@@ -44,6 +46,7 @@ class Redshift(Postgres):
 
         TRANSFORMS = {
             **Postgres.Generator.TRANSFORMS,  # type: ignore
+            **transforms.ELIMINATE_DISTINCT_ON,  # type: ignore
             exp.DistKeyProperty: lambda self, e: f"DISTKEY({e.name})",
             exp.SortKeyProperty: lambda self, e: f"{'COMPOUND ' if e.args['compound'] else ''}SORTKEY({self.format_args(*e.this)})",
             exp.DistStyleProperty: lambda self, e: self.naked_property(e),

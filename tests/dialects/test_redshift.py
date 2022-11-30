@@ -50,6 +50,12 @@ class TestRedshift(Validator):
                 "redshift": 'SELECT tablename, "column" FROM pg_table_def WHERE "column" LIKE \'%start\\\\_%\' LIMIT 5'
             },
         )
+        self.validate_all(
+            "SELECT DISTINCT ON (a) a, b FROM x ORDER BY c DESC",
+            write={
+                "redshift": 'SELECT a, b FROM (SELECT a, b, ROW_NUMBER() OVER (PARTITION BY a ORDER BY c DESC) AS "_row_number" FROM x) WHERE "_row_number" = 1',
+            },
+        )
 
     def test_identity(self):
         self.validate_identity("CAST('bla' AS SUPER)")
@@ -67,4 +73,10 @@ class TestRedshift(Validator):
         self.validate_identity("CREATE TABLE SOUP DISTKEY(soup1) SORTKEY(soup2) DISTSTYLE AUTO")
         self.validate_identity(
             "CREATE TABLE sales (salesid INTEGER NOT NULL) DISTKEY(listid) COMPOUND SORTKEY(listid, sellerid)"
+        )
+        self.validate_identity(
+            "COPY customer FROM 's3://mybucket/customer' IAM_ROLE 'arn:aws:iam::0123456789012:role/MyRedshiftRole'"
+        )
+        self.validate_identity(
+            "UNLOAD ('select * from venue') TO 's3://mybucket/unload/' IAM_ROLE 'arn:aws:iam::0123456789012:role/MyRedshiftRole'"
         )

@@ -148,9 +148,9 @@ print(sqlglot.transpile(sql, read='mysql', pretty=True)[0])
 */
 SELECT
   tbl.cola /* comment 1 */ + tbl.colb /* comment 2 */,
-  CAST(x AS INT), -- comment 3
-  y -- comment 4
-FROM bar /* comment 5 */, tbl /*          comment 6*/
+  CAST(x AS INT), /* comment 3 */
+  y /* comment 4 */
+FROM bar /* comment 5 */, tbl /*          comment 6 */
 ```
 
 
@@ -188,6 +188,28 @@ sqlglot.transpile("SELECT foo( FROM bar")
 sqlglot.errors.ParseError: Expecting ). Line 1, Col: 13.
   select foo( FROM bar
               ~~~~
+```
+
+Structured syntax errors are accessible for programmatic use:
+
+```python
+import sqlglot
+try:
+    sqlglot.transpile("SELECT foo( FROM bar")
+except sqlglot.errors.ParseError as e:
+    print(e.errors)
+```
+
+Output:
+```python
+[{
+  'description': 'Expecting )',
+  'line': 1,
+  'col': 13,
+  'start_context': 'SELECT foo( ',
+  'highlight': 'FROM',
+  'end_context': ' bar'
+}]
 ```
 
 ### Unsupported Errors

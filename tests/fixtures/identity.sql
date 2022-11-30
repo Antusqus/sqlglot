@@ -34,6 +34,7 @@ x >> 1
 x >> 1 | 1 & 1 ^ 1
 x || y
 1 - -1
+- -5
 dec.x + y
 a.filter
 a.b.c
@@ -438,6 +439,7 @@ SELECT student, score FROM tests CROSS JOIN UNNEST(scores) AS t(a, b)
 SELECT student, score FROM tests CROSS JOIN UNNEST(scores) WITH ORDINALITY AS t(a, b)
 SELECT student, score FROM tests CROSS JOIN UNNEST(x.scores) AS t(score)
 SELECT student, score FROM tests CROSS JOIN UNNEST(ARRAY(x.scores)) AS t(score)
+CREATE TABLE foo (id INT PRIMARY KEY ASC)
 CREATE TABLE a.b AS SELECT 1
 CREATE TABLE a.b AS SELECT a FROM a.c
 CREATE TABLE IF NOT EXISTS x AS SELECT a FROM d
@@ -579,6 +581,7 @@ SELECT * FROM (tbl1 JOIN (tbl2 JOIN tbl3) ON bla = foo)
 SELECT * FROM (tbl1 JOIN LATERAL (SELECT * FROM bla) AS tbl)
 SELECT CAST(x AS INT) /* comment */ FROM foo
 SELECT a /* x */, b /* x */
+SELECT a /* x */ /* y */ /* z */, b /* k */ /* m */
 SELECT * FROM foo /* x */, bla /* x */
 SELECT 1 /* comment */ + 1
 SELECT 1 /* c1 */ + 2 /* c2 */
@@ -588,3 +591,7 @@ SELECT x FROM a.b.c /* x */, e.f.g /* x */
 SELECT FOO(x /* c */) /* FOO */, b /* b */
 SELECT FOO(x /* c1 */ + y /* c2 */ + BLA(5 /* c3 */)) FROM VALUES (1 /* c4 */, "test" /* c5 */) /* c6 */
 SELECT a FROM x WHERE a COLLATE 'utf8_general_ci' = 'b'
+SELECT x AS INTO FROM bla
+SELECT * INTO newevent FROM event
+SELECT * INTO TEMPORARY newevent FROM event
+SELECT * INTO UNLOGGED newevent FROM event

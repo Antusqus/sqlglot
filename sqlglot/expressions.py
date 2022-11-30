@@ -43,14 +43,14 @@ class Expression(metaclass=_Expression):
 
     key = "Expression"
     arg_types = {"this": True}
-    __slots__ = ("args", "parent", "arg_key", "type", "comment")
+    __slots__ = ("args", "parent", "arg_key", "type", "comments")
 
     def __init__(self, **args):
         self.args = args
         self.parent = None
         self.arg_key = None
         self.type = None
-        self.comment = None
+        self.comments = None
 
         for arg_key, value in self.args.items():
             self._set_parent(arg_key, value)
@@ -88,19 +88,6 @@ class Expression(metaclass=_Expression):
             return field.this
         return ""
 
-    def find_comment(self, key: str) -> str:
-        """
-        Finds the comment that is attached to a specified child node.
-
-        Args:
-            key: the key of the target child node (e.g. "this", "expression", etc).
-
-        Returns:
-            The comment attached to the child node, or the empty string, if it doesn't exist.
-        """
-        field = self.args.get(key)
-        return field.comment if isinstance(field, Expression) else ""
-
     @property
     def is_string(self):
         return isinstance(self, Literal) and self.args["is_string"]
@@ -137,7 +124,7 @@ class Expression(metaclass=_Expression):
 
     def __deepcopy__(self, memo):
         copy = self.__class__(**deepcopy(self.args))
-        copy.comment = self.comment
+        copy.comments = self.comments
         copy.type = self.type
         return copy
 
@@ -369,7 +356,7 @@ class Expression(metaclass=_Expression):
             )
             for k, vs in self.args.items()
         }
-        args["comment"] = self.comment
+        args["comments"] = self.comments
         args["type"] = self.type
         args = {k: v for k, v in args.items() if v or not hide_missing}
 
@@ -767,7 +754,7 @@ class NotNullColumnConstraint(ColumnConstraintKind):
 
 
 class PrimaryKeyColumnConstraint(ColumnConstraintKind):
-    pass
+    arg_types = {"desc": False}
 
 
 class UniqueColumnConstraint(ColumnConstraintKind):
@@ -817,6 +804,12 @@ class ForeignKey(Expression):
 
 class Unique(Expression):
     arg_types = {"expressions": True}
+
+
+# https://www.postgresql.org/docs/9.1/sql-selectinto.html
+# https://docs.aws.amazon.com/redshift/latest/dg/r_SELECT_INTO.html#r_SELECT_INTO-examples
+class Into(Expression):
+    arg_types = {"this": True, "temporary": False, "unlogged": False}
 
 
 class From(Expression):
@@ -1086,6 +1079,10 @@ class SortKeyProperty(Property):
 
 class DistStyleProperty(Property):
     arg_types = {"this": True}
+
+
+class LikeProperty(Property):
+    arg_types = {"this": True, "expressions": False}
 
 
 class LocationProperty(Property):
@@ -1388,6 +1385,7 @@ class Select(Subqueryable):
         "expressions": False,
         "hint": False,
         "distinct": False,
+        "into": False,
         "from": False,
         **QUERY_MODIFIERS,
     }
@@ -2020,6 +2018,7 @@ class DataType(Expression):
         DECIMAL = auto()
         BOOLEAN = auto()
         JSON = auto()
+        JSONB = auto()
         INTERVAL = auto()
         TIMESTAMP = auto()
         TIMESTAMPTZ = auto()
@@ -2034,6 +2033,7 @@ class DataType(Expression):
         STRUCT = auto()
         NULLABLE = auto()
         HLLSKETCH = auto()
+        HSTORE = auto()
         SUPER = auto()
         SERIAL = auto()
         SMALLSERIAL = auto()
@@ -2114,7 +2114,7 @@ class Transaction(Command):
 
 
 class Commit(Command):
-    arg_types = {}  # type: ignore
+    arg_types = {"chain": False}
 
 
 class Rollback(Command):
@@ -2447,7 +2447,7 @@ class ArrayFilter(Func):
 
 
 class ArraySize(Func):
-    pass
+    arg_types = {"this": True, "expression": False}
 
 
 class ArraySort(Func):
@@ -2731,6 +2731,16 @@ class VarMap(Func):
     is_var_len_args = True
 
 
+class Matches(Func):
+    """Oracle/Snowflake decode.
+    https://docs.oracle.com/cd/B19306_01/server.102/b14200/functions040.htm
+    Pattern matching MATCHES(value, search1, result1, ...searchN, resultN, else)
+    """
+
+    arg_types = {"this": True, "expressions": True}
+    is_var_len_args = True
+
+
 class Max(AggFunc):
     pass
 
@@ -2788,6 +2798,10 @@ class Repeat(Func):
 
 class Round(Func):
     arg_types = {"this": True, "decimals": False}
+
+
+class RowNumber(Func):
+    arg_types: t.Dict[str, t.Any] = {}
 
 
 class SafeDivide(Func):

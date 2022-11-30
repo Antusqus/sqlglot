@@ -6,6 +6,9 @@ class TestPostgres(Validator):
     dialect = "postgres"
 
     def test_ddl(self):
+        self.validate_identity("CREATE TABLE test (foo HSTORE)")
+        self.validate_identity("CREATE TABLE test (foo JSONB)")
+        self.validate_identity("CREATE TABLE test (foo VARCHAR(64)[])")
         self.validate_all(
             "CREATE TABLE products (product_no INT UNIQUE, name TEXT, price DECIMAL)",
             write={
@@ -60,6 +63,12 @@ class TestPostgres(Validator):
             )
 
     def test_postgres(self):
+        self.validate_identity("SELECT ARRAY[1, 2, 3]")
+        self.validate_identity("SELECT ARRAY_LENGTH(ARRAY[1, 2, 3], 1)")
+        self.validate_identity("STRING_AGG(x, y)")
+        self.validate_identity("STRING_AGG(x, ',' ORDER BY y)")
+        self.validate_identity("STRING_AGG(x, ',' ORDER BY y DESC)")
+        self.validate_identity("STRING_AGG(DISTINCT x, ',' ORDER BY y DESC)")
         self.validate_identity("SELECT CASE WHEN SUBSTRING('abcdefg') IN ('ab') THEN 1 ELSE 0 END")
         self.validate_identity(
             "SELECT CASE WHEN SUBSTRING('abcdefg' FROM 1) IN ('ab') THEN 1 ELSE 0 END"
@@ -87,6 +96,14 @@ class TestPostgres(Validator):
         self.validate_identity("SELECT CAST(e'\\176' AS BYTEA)")
 
         self.validate_all(
+            "END WORK AND NO CHAIN",
+            write={"postgres": "COMMIT AND NO CHAIN"},
+        )
+        self.validate_all(
+            "END AND CHAIN",
+            write={"postgres": "COMMIT AND CHAIN"},
+        )
+        self.validate_all(
             "CREATE TABLE x (a UUID, b BYTEA)",
             write={
                 "duckdb": "CREATE TABLE x (a UUID, b VARBINARY)",
@@ -94,6 +111,10 @@ class TestPostgres(Validator):
                 "hive": "CREATE TABLE x (a UUID, b BINARY)",
                 "spark": "CREATE TABLE x (a UUID, b BINARY)",
             },
+        )
+
+        self.validate_identity(
+            "CREATE TABLE A (LIKE B INCLUDING CONSTRAINT INCLUDING COMPRESSION EXCLUDING COMMENTS)"
         )
         self.validate_all(
             "SELECT SUM(x) OVER (PARTITION BY a ORDER BY d ROWS 1 PRECEDING)",

@@ -115,6 +115,9 @@ class PythonExecutor:
             sink = self.table(context.columns)
 
         for reader in table_iter:
+            if len(sink) >= step.limit:
+                break
+
             if condition and not context.eval(condition):
                 continue
 
@@ -122,9 +125,6 @@ class PythonExecutor:
                 sink.append(context.eval_tuple(projections))
             else:
                 sink.append(reader.row)
-
-            if len(sink) >= step.limit:
-                break
 
         return self.context({step.name: sink})
 
@@ -288,20 +288,31 @@ class PythonExecutor:
         end = 1
         length = len(context.table)
         table = self.table(list(step.group) + step.aggregations)
+        condition = self.generate(step.condition)
 
-        for i in range(length):
-            context.set_index(i)
-            key = context.eval_tuple(group_by)
-            group = key if group is None else group
-            end += 1
-            if key != group:
-                context.set_range(start, end - 2)
+        def add_row():
+            if not condition or context.eval(condition):
                 table.append(group + context.eval_tuple(aggregations))
-                group = key
-                start = end - 2
-            if i == length - 1:
-                context.set_range(start, end - 1)
-                table.append(group + context.eval_tuple(aggregations))
+
+        if length:
+            for i in range(length):
+                context.set_index(i)
+                key = context.eval_tuple(group_by)
+                group = key if group is None else group
+                end += 1
+                if key != group:
+                    context.set_range(start, end - 2)
+                    add_row()
+                    group = key
+                    start = end - 2
+                if len(table.rows) >= step.limit:
+                    break
+                if i == length - 1:
+                    context.set_range(start, end - 1)
+                    add_row()
+        elif step.limit > 0:
+            context.set_range(0, 0)
+            table.append(context.eval_tuple(group_by) + context.eval_tuple(aggregations))
 
         context = self.context({step.name: table, **{name: table for name in context.tables}})
 
@@ -399,8 +410,9 @@ class Python(Dialect):
             exp.Boolean: lambda self, e: "True" if e.this else "False",
             exp.Cast: lambda self, e: f"CAST({self.sql(e.this)}, exp.DataType.Type.{e.args['to']})",
             exp.Column: lambda self, e: f"scope[{self.sql(e, 'table') or None}][{self.sql(e.this)}]",
+            exp.Distinct: lambda self, e: f"set({self.sql(e, 'this')})",
             exp.Extract: lambda self, e: f"EXTRACT('{e.name.lower()}', {self.sql(e, 'expression')})",
-            exp.In: lambda self, e: f"{self.sql(e, 'this')} in {self.expressions(e)}",
+            exp.In: lambda self, e: f"{self.sql(e, 'this')} in ({self.expressions(e, flat=True)})",
             exp.Is: lambda self, e: self.binary(e, "is"),
             exp.Not: lambda self, e: f"not {self.sql(e.this)}",
             exp.Null: lambda *_: "None",

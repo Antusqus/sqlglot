@@ -15,6 +15,51 @@ class TestParser(unittest.TestCase):
         self.assertIsInstance(parse_one("int", into=exp.DataType), exp.DataType)
         self.assertIsInstance(parse_one("array<int>", into=exp.DataType), exp.DataType)
 
+    def test_parse_into_error(self):
+        expected_message = "Failed to parse into [<class 'sqlglot.expressions.From'>]"
+        expected_errors = [
+            {
+                "description": "Invalid expression / Unexpected token",
+                "line": 1,
+                "col": 1,
+                "start_context": "",
+                "highlight": "SELECT",
+                "end_context": " 1;",
+                "into_expression": exp.From,
+            }
+        ]
+        with self.assertRaises(ParseError) as ctx:
+            parse_one("SELECT 1;", "sqlite", [exp.From])
+        self.assertEqual(str(ctx.exception), expected_message)
+        self.assertEqual(ctx.exception.errors, expected_errors)
+
+    def test_parse_into_errors(self):
+        expected_message = "Failed to parse into [<class 'sqlglot.expressions.From'>, <class 'sqlglot.expressions.Join'>]"
+        expected_errors = [
+            {
+                "description": "Invalid expression / Unexpected token",
+                "line": 1,
+                "col": 1,
+                "start_context": "",
+                "highlight": "SELECT",
+                "end_context": " 1;",
+                "into_expression": exp.From,
+            },
+            {
+                "description": "Invalid expression / Unexpected token",
+                "line": 1,
+                "col": 1,
+                "start_context": "",
+                "highlight": "SELECT",
+                "end_context": " 1;",
+                "into_expression": exp.Join,
+            },
+        ]
+        with self.assertRaises(ParseError) as ctx:
+            parse_one("SELECT 1;", "sqlite", [exp.From, exp.Join])
+        self.assertEqual(str(ctx.exception), expected_message)
+        self.assertEqual(ctx.exception.errors, expected_errors)
+
     def test_column(self):
         columns = parse_one("select a, ARRAY[1] b, case when 1 then 1 end").find_all(exp.Column)
         assert len(list(columns)) == 1
@@ -23,6 +68,9 @@ class TestParser(unittest.TestCase):
 
     def test_float(self):
         self.assertEqual(parse_one(".2"), parse_one("0.2"))
+
+    def test_unary_plus(self):
+        self.assertEqual(parse_one("+15"), exp.Literal.number(15))
 
     def test_table(self):
         tables = [t.sql() for t in parse_one("select * from a, b.c, .d").find_all(exp.Table)]
@@ -157,8 +205,9 @@ class TestParser(unittest.TestCase):
     def test_comments(self):
         expression = parse_one(
             """
-            --comment1
-            SELECT /* this won't be used */
+            --comment1.1
+            --comment1.2
+            SELECT /*comment1.3*/
                 a, --comment2
                 b as B, --comment3:testing
                 "test--annotation",
@@ -169,13 +218,13 @@ class TestParser(unittest.TestCase):
         """
         )
 
-        self.assertEqual(expression.comment, "comment1")
-        self.assertEqual(expression.expressions[0].comment, "comment2")
-        self.assertEqual(expression.expressions[1].comment, "comment3:testing")
-        self.assertEqual(expression.expressions[2].comment, None)
-        self.assertEqual(expression.expressions[3].comment, "comment4 --foo")
-        self.assertEqual(expression.expressions[4].comment, "")
-        self.assertEqual(expression.expressions[5].comment, " space")
+        self.assertEqual(expression.comments, ["comment1.1", "comment1.2", "comment1.3"])
+        self.assertEqual(expression.expressions[0].comments, ["comment2"])
+        self.assertEqual(expression.expressions[1].comments, ["comment3:testing"])
+        self.assertEqual(expression.expressions[2].comments, None)
+        self.assertEqual(expression.expressions[3].comments, ["comment4 --foo"])
+        self.assertEqual(expression.expressions[4].comments, [""])
+        self.assertEqual(expression.expressions[5].comments, [" space"])
 
     def test_type_literals(self):
         self.assertEqual(parse_one("int 1"), parse_one("CAST(1 AS INT)"))

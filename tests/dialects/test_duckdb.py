@@ -89,6 +89,8 @@ class TestDuckDB(Validator):
                 "presto": "CAST(COL AS ARRAY(BIGINT))",
                 "hive": "CAST(COL AS ARRAY<BIGINT>)",
                 "spark": "CAST(COL AS ARRAY<LONG>)",
+                "postgres": "CAST(COL AS BIGINT[])",
+                "snowflake": "CAST(COL AS ARRAY)",
             },
         )
 
@@ -103,6 +105,10 @@ class TestDuckDB(Validator):
                 "presto": "ARRAY[0, 1, 2]",
                 "spark": "ARRAY(0, 1, 2)",
             },
+        )
+        self.validate_all(
+            "SELECT ARRAY_LENGTH([0], 1) AS x",
+            write={"duckdb": "SELECT ARRAY_LENGTH(LIST_VALUE(0), 1) AS x"},
         )
         self.validate_all(
             "REGEXP_MATCHES(x, y)",

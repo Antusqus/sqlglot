@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 import logging
-import re
 import typing as t
 
 from sqlglot import exp
-from sqlglot.errors import ErrorLevel, UnsupportedError, concat_errors
+from sqlglot.errors import ErrorLevel, UnsupportedError, concat_messages
 from sqlglot.helper import apply_index_offset, csv
 from sqlglot.time import format_time
 from sqlglot.tokens import TokenType
 
 logger = logging.getLogger("sqlglot")
-
-NEWLINE_RE = re.compile("\r\n?|\n")
 
 
 class Generator:
@@ -97,6 +94,7 @@ class Generator:
         exp.DistStyleProperty,
         exp.DistKeyProperty,
         exp.SortKeyProperty,
+        exp.LikeProperty,
     }
 
     WITH_PROPERTIES = {
@@ -106,7 +104,7 @@ class Generator:
         exp.TableFormatProperty,
     }
 
-    WITH_SEPARATED_COMMENTS = (exp.Select,)
+    WITH_SEPARATED_COMMENTS = (exp.Select, exp.From, exp.Where, exp.Binary)
 
     __slots__ = (
         "time_mapping",
@@ -211,7 +209,7 @@ class Generator:
             for msg in self.unsupported_messages:
                 logger.warning(msg)
         elif self.unsupported_level == ErrorLevel.RAISE and self.unsupported_messages:
-            raise UnsupportedError(concat_errors(self.unsupported_messages, self.max_unsupported))
+            raise UnsupportedError(concat_messages(self.unsupported_messages, self.max_unsupported))
 
         return sql
 
@@ -226,25 +224,24 @@ class Generator:
     def seg(self, sql, sep=" "):
         return f"{self.sep(sep)}{sql}"
 
-    def maybe_comment(self, sql, expression, single_line=False):
-        comment = expression.comment if self._comments else None
-
-        if not comment:
-            return sql
-
+    def pad_comment(self, comment):
         comment = " " + comment if comment[0].strip() else comment
         comment = comment + " " if comment[-1].strip() else comment
+        return comment
+
+    def maybe_comment(self, sql, expression):
+        comments = expression.comments if self._comments else None
+
+        if not comments:
+            return sql
+
+        sep = "\n" if self.pretty else " "
+        comments = sep.join(f"/*{self.pad_comment(comment)}*/" for comment in comments)
 
         if isinstance(expression, self.WITH_SEPARATED_COMMENTS):
-            return f"/*{comment}*/{self.sep()}{sql}"
+            return f"{comments}{self.sep()}{sql}"
 
-        if not self.pretty:
-            return f"{sql} /*{comment}*/"
-
-        if not NEWLINE_RE.search(comment):
-            return f"{sql} --{comment.rstrip()}" if single_line else f"{sql} /*{comment}*/"
-
-        return f"/*{comment}*/\n{sql}" if sql else f" /*{comment}*/"
+        return f"{sql} {comments}"
 
     def wrap(self, expression):
         this_sql = self.indent(
@@ -387,8 +384,11 @@ class Generator:
     def notnullcolumnconstraint_sql(self, _):
         return "NOT NULL"
 
-    def primarykeycolumnconstraint_sql(self, _):
-        return "PRIMARY KEY"
+    def primarykeycolumnconstraint_sql(self, expression):
+        desc = expression.args.get("desc")
+        if desc is not None:
+            return f"PRIMARY KEY{' DESC' if desc else ' ASC'}"
+        return f"PRIMARY KEY"
 
     def uniquecolumnconstraint_sql(self, _):
         return "UNIQUE"
@@ -569,6 +569,11 @@ class Generator:
 
         return f"{property_name}={self.sql(expression, 'this')}"
 
+    def likeproperty_sql(self, expression):
+        options = " ".join(f"{e.name} {self.sql(e, 'value')}" for e in expression.expressions)
+        options = f" {options}" if options else ""
+        return f"LIKE {self.sql(expression, 'this')}{options}"
+
     def insert_sql(self, expression):
         overwrite = expression.args.get("overwrite")
 
@@ -691,6 +696,11 @@ class Generator:
 
     def var_sql(self, expression):
         return self.sql(expression, "this")
+
+    def into_sql(self, expression):
+        temporary = " TEMPORARY" if expression.args.get("temporary") else ""
+        unlogged = " UNLOGGED" if expression.args.get("unlogged") else ""
+        return f"{self.seg('INTO')}{temporary or unlogged} {self.sql(expression, 'this')}"
 
     def from_sql(self, expression):
         expressions = self.expressions(expression, flat=True)
@@ -875,6 +885,7 @@ class Generator:
         sql = self.query_modifiers(
             expression,
             f"SELECT{hint}{distinct}{expressions}",
+            self.sql(expression, "into", comment=False),
             self.sql(expression, "from", comment=False),
         )
         return self.prepend_ctes(expression, sql)
@@ -1053,6 +1064,11 @@ class Generator:
         else:
             return f"TRIM({target})"
 
+    def concat_sql(self, expression):
+        if len(expression.expressions) == 1:
+            return self.sql(expression.expressions[0])
+        return self.function_fallback_sql(expression)
+
     def check_sql(self, expression):
         this = self.sql(expression, key="this")
         return f"CHECK ({this})"
@@ -1117,7 +1133,10 @@ class Generator:
         return self.prepend_ctes(expression, sql)
 
     def neg_sql(self, expression):
-        return f"-{self.sql(expression, 'this')}"
+        # This makes sure we don't convert "- - 5" to "--5", which is a comment
+        this_sql = self.sql(expression, "this")
+        sep = " " if this_sql[0] == "-" else ""
+        return f"-{sep}{this_sql}"
 
     def not_sql(self, expression):
         return f"NOT {self.sql(expression, 'this')}"
@@ -1183,8 +1202,12 @@ class Generator:
     def transaction_sql(self, *_):
         return "BEGIN"
 
-    def commit_sql(self, *_):
-        return "COMMIT"
+    def commit_sql(self, expression):
+        chain = expression.args.get("chain")
+        if chain is not None:
+            chain = " AND CHAIN" if chain else " AND NO CHAIN"
+
+        return f"COMMIT{chain or ''}"
 
     def rollback_sql(self, expression):
         savepoint = expression.args.get("savepoint")
@@ -1326,15 +1349,15 @@ class Generator:
         result_sqls = []
         for i, e in enumerate(expressions):
             sql = self.sql(e, comment=False)
-            comment = self.maybe_comment("", e, single_line=True)
+            comments = self.maybe_comment("", e)
 
             if self.pretty:
                 if self._leading_comma:
-                    result_sqls.append(f"{sep if i > 0 else pad}{sql}{comment}")
+                    result_sqls.append(f"{sep if i > 0 else pad}{sql}{comments}")
                 else:
-                    result_sqls.append(f"{sql}{stripped_sep if i + 1 < num_sqls else ''}{comment}")
+                    result_sqls.append(f"{sql}{stripped_sep if i + 1 < num_sqls else ''}{comments}")
             else:
-                result_sqls.append(f"{sql}{comment}{sep if i + 1 < num_sqls else ''}")
+                result_sqls.append(f"{sql}{comments}{sep if i + 1 < num_sqls else ''}")
 
         result_sqls = "\n".join(result_sqls) if self.pretty else "".join(result_sqls)
         return self.indent(result_sqls, skip_first=False) if indent else result_sqls

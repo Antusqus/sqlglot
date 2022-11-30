@@ -81,6 +81,7 @@ class TokenType(AutoName):
     BINARY = auto()
     VARBINARY = auto()
     JSON = auto()
+    JSONB = auto()
     TIMESTAMP = auto()
     TIMESTAMPTZ = auto()
     TIMESTAMPLTZ = auto()
@@ -91,6 +92,7 @@ class TokenType(AutoName):
     NULLABLE = auto()
     GEOMETRY = auto()
     HLLSKETCH = auto()
+    HSTORE = auto()
     SUPER = auto()
     SERIAL = auto()
     SMALLSERIAL = auto()
@@ -272,6 +274,7 @@ class TokenType(AutoName):
     UNBOUNDED = auto()
     UNCACHE = auto()
     UNION = auto()
+    UNLOGGED = auto()
     UNNEST = auto()
     UNPIVOT = auto()
     UPDATE = auto()
@@ -292,7 +295,7 @@ class TokenType(AutoName):
 
 
 class Token:
-    __slots__ = ("token_type", "text", "line", "col", "comment")
+    __slots__ = ("token_type", "text", "line", "col", "comments")
 
     @classmethod
     def number(cls, number: int) -> Token:
@@ -320,13 +323,13 @@ class Token:
         text: str,
         line: int = 1,
         col: int = 1,
-        comment: t.Optional[str] = None,
+        comments: t.List[str] = [],
     ) -> None:
         self.token_type = token_type
         self.text = text
         self.line = line
         self.col = max(col - len(text), 1)
-        self.comment = comment
+        self.comments = comments
 
     def __repr__(self) -> str:
         attributes = ", ".join(f"{k}: {getattr(self, k)}" for k in self.__slots__)
@@ -584,8 +587,9 @@ class Tokenizer(metaclass=_Tokenizer):
         "TRAILING": TokenType.TRAILING,
         "UNBOUNDED": TokenType.UNBOUNDED,
         "UNION": TokenType.UNION,
-        "UNPIVOT": TokenType.UNPIVOT,
+        "UNLOGGED": TokenType.UNLOGGED,
         "UNNEST": TokenType.UNNEST,
+        "UNPIVOT": TokenType.UNPIVOT,
         "UPDATE": TokenType.UPDATE,
         "USE": TokenType.USE,
         "USING": TokenType.USING,
@@ -688,12 +692,12 @@ class Tokenizer(metaclass=_Tokenizer):
         "_current",
         "_line",
         "_col",
-        "_comment",
+        "_comments",
         "_char",
         "_end",
         "_peek",
         "_prev_token_line",
-        "_prev_token_comment",
+        "_prev_token_comments",
         "_prev_token_type",
         "_replace_backslash",
     )
@@ -710,13 +714,13 @@ class Tokenizer(metaclass=_Tokenizer):
         self._current = 0
         self._line = 1
         self._col = 1
-        self._comment = None
+        self._comments: t.List[str] = []
 
         self._char = None
         self._end = None
         self._peek = None
         self._prev_token_line = -1
-        self._prev_token_comment = None
+        self._prev_token_comments: t.List[str] = []
         self._prev_token_type = None
 
     def tokenize(self, sql: str) -> t.List[Token]:
@@ -769,7 +773,7 @@ class Tokenizer(metaclass=_Tokenizer):
 
     def _add(self, token_type: TokenType, text: t.Optional[str] = None) -> None:
         self._prev_token_line = self._line
-        self._prev_token_comment = self._comment
+        self._prev_token_comments = self._comments
         self._prev_token_type = token_type  # type: ignore
         self.tokens.append(
             Token(
@@ -777,10 +781,10 @@ class Tokenizer(metaclass=_Tokenizer):
                 self._text if text is None else text,
                 self._line,
                 self._col,
-                self._comment,
+                self._comments,
             )
         )
-        self._comment = None
+        self._comments = []
 
         if token_type in self.COMMANDS and (
             len(self.tokens) == 1 or self.tokens[-2].token_type == TokenType.SEMICOLON
@@ -859,22 +863,18 @@ class Tokenizer(metaclass=_Tokenizer):
             while not self._end and self._chars(comment_end_size) != comment_end:
                 self._advance()
 
-            self._comment = self._text[comment_start_size : -comment_end_size + 1]  # type: ignore
+            self._comments.append(self._text[comment_start_size : -comment_end_size + 1])  # type: ignore
             self._advance(comment_end_size - 1)
         else:
             while not self._end and self.WHITE_SPACE.get(self._peek) != TokenType.BREAK:  # type: ignore
                 self._advance()
-            self._comment = self._text[comment_start_size:]  # type: ignore
+            self._comments.append(self._text[comment_start_size:])  # type: ignore
 
-        # Leading comment is attached to the succeeding token, whilst trailing comment to the preceding. If both
-        # types of comment can be attached to a token, the trailing one is discarded in favour of the leading one.
-
+        # Leading comment is attached to the succeeding token, whilst trailing comment to the preceding.
+        # Multiple consecutive comments are preserved by appending them to the current comments list.
         if comment_start_line == self._prev_token_line:
-            if self._prev_token_comment is None:
-                self.tokens[-1].comment = self._comment
-                self._prev_token_comment = self._comment
-
-            self._comment = None
+            self.tokens[-1].comments.extend(self._comments)
+            self._comments = []
 
         return True
 
