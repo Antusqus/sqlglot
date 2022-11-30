@@ -4,6 +4,7 @@ from pathlib import Path
 from sqlglot import diff, parse_one
 from sqlglot import exp
 import sqlglot
+from sqlglot.errors import ErrorLevel
 from tests.dialects.test_mysql import TestMySQL
 
 mySQL_statement: str =\
@@ -38,7 +39,7 @@ def main():
                         f.close()
 
                     print(f"Transpiling: {file.name}")
-                    transpiled_statement = sqlglot.transpile(query, read="mysql", write="tsql", pretty = True)
+                    transpiled_statement = sqlglot.transpile(query, read="mysql", write="tsql", pretty = True, error_level=ErrorLevel.IGNORE)
                     for item in transpiled_statement:
                         transpiled_ast = repr(sqlglot.parse_one(item, read="tsql"))
 

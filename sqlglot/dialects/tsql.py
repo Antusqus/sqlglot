@@ -59,12 +59,8 @@ def _format_time_lambda(exp_class, full_format_mapping=None, default=None):
 
     return _format_time
 
-<<<<<<< HEAD
-def parse_format(args):
-=======
 
 def _parse_format(args):
->>>>>>> upstream/main
     fmt = seq_get(args, 1)
     number_fmt = fmt.name in TRANSPILE_SAFE_NUMBER_FMT or not DATE_FMT_RE.search(fmt.this)
     if number_fmt:
