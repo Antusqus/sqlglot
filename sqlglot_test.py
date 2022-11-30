@@ -1,4 +1,6 @@
 from itertools import count
+from os import error
+from pathlib import Path
 from sqlglot import diff, parse_one
 from sqlglot import exp
 import sqlglot
@@ -6,54 +8,57 @@ from tests.dialects.test_mysql import TestMySQL
 
 mySQL_statement: str =\
 """ 
-CREATE VIEW `nicer_but_slower_film_list` AS
-    SELECT 
-        `film`.`film_id` AS `FID`,
-        `film`.`title` AS `title`,
-        `film`.`description` AS `description`,
-        `category`.`name` AS `category`,
-        `film`.`rental_rate` AS `price`,
-        `film`.`length` AS `length`,
-        `film`.`rating` AS `rating`,
-        GROUP_CONCAT(CONCAT(CONCAT(UPPER(SUBSTR(`actor`.`first_name`, 1, 1)),
-                            LOWER(SUBSTR(`actor`.`first_name`,
-                                        2,
-                                        LENGTH(`actor`.`first_name`))),
-                            _utf8mb4 ' ',
-                            CONCAT(UPPER(SUBSTR(`actor`.`last_name`, 1, 1)),
-                                    LOWER(SUBSTR(`actor`.`last_name`,
-                                                2,
-                                                LENGTH(`actor`.`last_name`))))))
-            SEPARATOR ', ') AS `actors`
-    FROM
-        ((((`category`
-        LEFT JOIN `film_category` ON ((`category`.`category_id` = `film_category`.`category_id`)))
-        LEFT JOIN `film` ON ((`film_category`.`film_id` = `film`.`film_id`)))
-        JOIN `film_actor` ON ((`film`.`film_id` = `film_actor`.`film_id`)))
-        JOIN `actor` ON ((`film_actor`.`actor_id` = `actor`.`actor_id`)))
-    GROUP BY `film`.`film_id` , `category`.`name`
+select `a`.`actor_id` AS `actor_id`,`a`.`first_name` AS `first_name`,`a`.`last_name` AS `last_name`,group_concat(distinct concat(`c`.`name`,': ',(select group_concat(`f`.`title` order by `f`.`title` ASC separator ', ') from ((`sakila`.`film` `f` join `sakila`.`film_category` `fc` on((`f`.`film_id` = `fc`.`film_id`))) join `sakila`.`film_actor` `fa` on((`f`.`film_id` = `fa`.`film_id`))) where ((`fc`.`category_id` = `c`.`category_id`) and (`fa`.`actor_id` = `a`.`actor_id`)))) order by `c`.`name` ASC separator '; ') AS `film_info` from (((`sakila`.`actor` `a` left join `sakila`.`film_actor` `fa` on((`a`.`actor_id` = `fa`.`actor_id`))) left join `sakila`.`film_category` `fc` on((`fa`.`film_id` = `fc`.`film_id`))) left join `sakila`.`category` `c` on((`fc`.`category_id` = `c`.`category_id`))) group by `a`.`actor_id`,`a`.`first_name`,`a`.`last_name`
 """
-test_statement: str = \
-"""
-GROUP_CONCAT(CONCAT(CONCAT(UPPER(SUBSTR(`actor`.`first_name`, 1, 1)),
-                            LOWER(SUBSTR(`actor`.`first_name`,
-                                        2,
-                                        LENGTH(`actor`.`first_name`))),
-                            _utf8mb4 ' ',
-                            CONCAT(UPPER(SUBSTR(`actor`.`last_name`, 1, 1)),
-                                    LOWER(SUBSTR(`actor`.`last_name`,
-                                                2,
-                                                LENGTH(`actor`.`last_name`))))))
-            SEPARATOR ', ') AS `actors`      
-"""
-parsed_statement = repr(parse_one(mySQL_statement, "mysql" ))
-# print(count(parsed_statement, "TABLE this"))
-transpiled_statement = sqlglot.transpile(mySQL_statement, read="mysql", write="tsql", pretty = True)
-for item in transpiled_statement:
-    print(item)
+def main():
+    try:
+        # print(sqlglot.transpile(mySQL_statement, read="mysql",write="mysql", pretty= True)[0])
 
-trans_parsed_statement = repr(parse_one(transpiled_statement[0], read="tsql"))
-# print(trans_parsed_statement.split(parsed_statement))
-# newtest = TestMySQL("test_introducers")
+        # exit()
+        # filename = "customer_list.sql"
+        abs_path = Path.cwd()
+        rel_path = f"queries/ddl_queries/"
 
-# print(newtest())
+        query: str
+        Path(abs_path,rel_path).mkdir(parents=True,exist_ok=True)
+        files = Path(abs_path,rel_path).glob("*")
+        tmp_filter = [""]
+        
+        transpile_path = Path(abs_path, rel_path, "transpiled/")
+        transpile_path.mkdir(parents=True,exist_ok=True)
+        
+        transpiled_ast_path = Path(transpile_path, "ast/")
+        transpiled_ast_path.mkdir(parents=True,exist_ok=True)
+
+        for file in files:
+            if not file.is_dir():
+                if f"{file.name}" not in tmp_filter:
+                    with open(file, "r") as f:
+                        query = f.read()
+                        f.close()
+
+                    print(f"Transpiling: {file.name}")
+                    transpiled_statement = sqlglot.transpile(query, read="mysql", write="tsql", pretty = True)
+                    for item in transpiled_statement:
+                        transpiled_ast = repr(sqlglot.parse_one(item, read="tsql"))
+
+                        with open(Path(transpile_path, file.name), "w") as wf:
+                            wf.writelines(item)
+                            wf.close()
+                        with open(Path(transpiled_ast_path,file.name), "w") as wx:
+                            wx.writelines(transpiled_ast)
+                            wx.close()
+                else:
+                    print(f"{file.name} is filtered. Skipping.")
+
+
+        # trans_parsed_statement = repr(parse_one(transpiled_statement[0], read="tsql"))
+        # print(trans_parsed_statement.split(parsed_statement))
+        # newtest = TestMySQL("test_introducers")
+
+        # print(newtest())
+    except error as e:
+        print(e)
+        
+if __name__ == "__main__":
+    main()

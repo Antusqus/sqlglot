@@ -194,6 +194,7 @@ class MySQL(Dialect):
                 exp.GroupConcat,
                 this=self._parse_lambda(),
                 separator=self._match(TokenType.SEPARATOR) and self._parse_field(),
+                ordered=self._match(TokenType.ORDER_BY) and self._parse_field()
             ),
             "SUBSTR": lambda self: self._parse_substring()
         }

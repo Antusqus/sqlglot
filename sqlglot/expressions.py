@@ -2652,7 +2652,7 @@ class Greatest(Func):
 
 
 class GroupConcat(Func):
-    arg_types = {"this": True, "separator": False}
+    arg_types = {"this": True, "separator": False, "ordered": False}
 
 
 class Hex(Func):
@@ -2812,7 +2812,7 @@ class Substring(Func):
     arg_types = {"this": True, "start": False, "length": False}
 
 class StrAgg(Func):
-    arg_types = {"this" : True, "separator": False}
+    arg_types = {"this" : True, "separator": False, "ordered": False}
 
 class StrPosition(Func):
     arg_types = {"substr": True, "this": True, "position": False}
