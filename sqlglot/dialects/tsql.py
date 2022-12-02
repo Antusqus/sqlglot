@@ -5,7 +5,7 @@ import re
 from sqlglot import exp, generator, parser, tokens
 from sqlglot.dialects.dialect import Dialect, parse_date_delta, rename_func
 from sqlglot.expressions import DataType
-from sqlglot.helper import seq_get
+from sqlglot.helper import flatten, seq_get
 from sqlglot.time import format_time
 from sqlglot.tokens import TokenType
 
@@ -110,6 +110,13 @@ def _string_agg_sql(self, e):
     separator = e.args.get("separator") or exp.Literal.string(",")
     return f"STRING_AGG({self.format_args(this, separator)}){order}"
 
+def _iif_sql(self, e):
+    e = e.copy()
+    args = flatten(e.args.values())
+    splitargs = self.format_args(*args).split(",")
+    if not "=" in splitargs[0]:
+        splitargs[0] = f"{splitargs[0]} = 1"
+    return f"IIF({self.format_args(*splitargs)})"
 
 class TSQL(Dialect):
     null_ordering = "nulls_are_small"
@@ -359,7 +366,7 @@ class TSQL(Dialect):
             exp.DateAdd: generate_date_delta_with_unit_sql,
             exp.DateDiff: generate_date_delta_with_unit_sql,
             exp.CurrentDate: rename_func("GETDATE"),
-            exp.If: rename_func("IIF"),
+            exp.If: _iif_sql,
             exp.NumberToStr: _format_sql,
             exp.TimeToStr: _format_sql,
             exp.GroupConcat: _string_agg_sql,
