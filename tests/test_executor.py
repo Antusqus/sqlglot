@@ -74,13 +74,13 @@ class TestExecutor(unittest.TestCase):
                 )
             return expression
 
-        for i, (sql, _) in enumerate(self.sqls[0:16]):
+        for i, (sql, _) in enumerate(self.sqls[0:18]):
             with self.subTest(f"tpch-h {i + 1}"):
                 a = self.cached_execute(sql)
                 sql = parse_one(sql).transform(to_csv).sql(pretty=True)
                 table = execute(sql, TPCH_SCHEMA)
                 b = pd.DataFrame(table.rows, columns=table.columns)
-                assert_frame_equal(a, b, check_dtype=False)
+                assert_frame_equal(a, b, check_dtype=False, check_index_type=False)
 
     def test_execute_callable(self):
         tables = {
@@ -456,11 +456,16 @@ class TestExecutor(unittest.TestCase):
             ("SELECT CONCAT('a', 'b') AS x", ["x"], [("ab",)]),
             ("SELECT 1 AS x, 2 AS y", ["x", "y"], [(1, 2)]),
             ("SELECT 'foo' LIMIT 1", ["_col_0"], [("foo",)]),
-            ("SELECT SUM(x) FROM (SELECT 1 AS x WHERE FALSE)", ["_col_0"], [(0,)]),
+            (
+                "SELECT SUM(x), COUNT(x) FROM (SELECT 1 AS x WHERE FALSE)",
+                ["_col_0", "_col_1"],
+                [(None, 0)],
+            ),
         ]:
-            result = execute(sql)
-            self.assertEqual(result.columns, tuple(cols))
-            self.assertEqual(result.rows, rows)
+            with self.subTest(sql):
+                result = execute(sql)
+                self.assertEqual(result.columns, tuple(cols))
+                self.assertEqual(result.rows, rows)
 
     def test_aggregate_without_group_by(self):
         result = execute("SELECT SUM(x) FROM t", tables={"t": [{"x": 1}, {"x": 2}]})
@@ -528,3 +533,8 @@ class TestExecutor(unittest.TestCase):
             with self.subTest(sql):
                 result = execute(f"SELECT {sql}")
                 self.assertEqual(result.rows, [(expected,)])
+
+    def test_case_sensitivity(self):
+        result = execute("SELECT A AS A FROM X", tables={"x": [{"a": 1}]})
+        self.assertEqual(result.columns, ("A",))
+        self.assertEqual(result.rows, [(1,)])
