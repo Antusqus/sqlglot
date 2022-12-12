@@ -111,12 +111,26 @@ def _string_agg_sql(self, e):
     return f"STRING_AGG({self.format_args(this, separator)}){order}"
 
 def _iif_sql(self, e):
-    e = e.copy()
-    args = flatten(e.args.values())
-    splitargs = self.format_args(*args).split(",")
-    if not "=" in splitargs[0]:
-        splitargs[0] = f"{splitargs[0]} = 1"
-    return f"IIF({self.format_args(*splitargs)})"
+    this = e.this
+    print(f"PRINTING EXPRESSION TYPE: {type(this)}")
+
+    for comparison in parser.Parser.COMPARISON.values():
+        # print(f" Comparison: {comparison.repr}")
+        comp = e.find(comparison)
+        if comp:
+            return f"""IIF({self.format_args(this, e.args.get("true") , e.args.get("false") )})"""
+    
+    for comparison in parser.Parser.EQUALITY.values():
+        # print(f" Comparison: {comparison}")
+        comp = e.find(comparison)
+        if comp:
+            return f"""IIF({self.format_args(this, e.args.get("true") , e.args.get("false") )})"""
+            
+    
+    this = f"{this} = 1"
+    # if condition.this.this not in parser.Parser.COMPARISON.values():
+
+    return f"""IIF({self.format_args(this, e.args.get("true") , e.args.get("false") )})"""
 
 class TSQL(Dialect):
     null_ordering = "nulls_are_small"
