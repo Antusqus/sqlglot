@@ -10,6 +10,7 @@ from sqlglot.dialects.dialect import (
     no_paren_current_date_sql,
     no_tablesample_sql,
     no_trycast_sql,
+    rename_func,
     strposition_to_local_sql,
 )
 from sqlglot.helper import seq_get
@@ -184,8 +185,9 @@ class MySQL(Dialect):
             "LOCATE": locate_to_strposition,
             "INSTR": lambda args: exp.StrPosition(substr=seq_get(args, 1), this=seq_get(args, 0)),
             "LEFT": lambda args: exp.Substring(
-                this=seq_get(args, 0), start=exp.Literal.number(1), length=seq_get(args, 1)
+                this=seq_get(args, 0), start=exp.Literal.number(1), length=seq_get(args, 1),
             ),
+            "IF": exp.If.from_arg_list,
         }
 
         FUNCTION_PARSERS = {
@@ -446,6 +448,7 @@ class MySQL(Dialect):
             exp.NullSafeEQ: lambda self, e: self.binary(e, "<=>"),
             exp.NullSafeNEQ: lambda self, e: self.not_sql(self.binary(e, "<=>")),
             exp.StrPosition: strposition_to_local_sql,
+            exp.If: rename_func("IF"),
         }
 
         ROOT_PROPERTIES = {

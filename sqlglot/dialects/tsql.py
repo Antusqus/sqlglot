@@ -111,23 +111,17 @@ def _string_agg_sql(self, e):
     return f"STRING_AGG({self.format_args(this, separator)}){order}"
 
 def _iif_sql(self, e):
-    this = e.this
-    print(f"PRINTING EXPRESSION TYPE: {type(this)}")
+    this = e.this    
+    comp_list = list(parser.Parser.COMPARISON.values())
+    comp_list.extend(parser.Parser.EQUALITY.values())
+    for comparison in comp_list:
+        comp = e.find(comparison)
+        if comp:
+            break
 
-    for comparison in parser.Parser.COMPARISON.values():
-        # print(f" Comparison: {comparison.repr}")
-        comp = e.find(comparison)
-        if comp:
-            return f"""IIF({self.format_args(this, e.args.get("true") , e.args.get("false") )})"""
+    if comp is None:
+        this = f"{this} = 1"
     
-    for comparison in parser.Parser.EQUALITY.values():
-        # print(f" Comparison: {comparison}")
-        comp = e.find(comparison)
-        if comp:
-            return f"""IIF({self.format_args(this, e.args.get("true") , e.args.get("false") )})"""
-            
-    
-    this = f"{this} = 1"
     # if condition.this.this not in parser.Parser.COMPARISON.values():
 
     return f"""IIF({self.format_args(this, e.args.get("true") , e.args.get("false") )})"""
