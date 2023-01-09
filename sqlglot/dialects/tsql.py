@@ -90,6 +90,7 @@ def _format_sql(self, e):
 
 
 def _string_agg_sql(self, e):
+    self.warn(e)
     e = e.copy()
 
     this = e.this

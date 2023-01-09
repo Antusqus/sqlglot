@@ -97,6 +97,10 @@ def _date_add_sql(kind):
 
     return func
 
+def _group_concat_sql(self, e):
+    self.warn()
+    return f"""GROUP_CONCAT({self.sql(e, "this")} SEPARATOR {self.sql(e, "separator") or "','"})"""
+
 class MySQL(Dialect):
     # https://prestodb.io/docs/current/functions/datetime.html#mysql-date-functions
     time_mapping = {
@@ -441,7 +445,7 @@ class MySQL(Dialect):
             exp.DateAdd: _date_add_sql("ADD"),
             exp.DateSub: _date_add_sql("SUB"),
             exp.DateTrunc: _date_trunc_sql,
-            exp.GroupConcat: lambda self, e: f"""GROUP_CONCAT({self.sql(e, "this")} SEPARATOR {self.sql(e, "separator") or "','"})""",
+            exp.GroupConcat: _group_concat_sql,
             exp.StrToDate: _str_to_date_sql,
             exp.StrToTime: _str_to_date_sql,
             exp.Trim: _trim_sql,

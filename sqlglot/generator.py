@@ -11,6 +11,8 @@ from sqlglot.tokens import TokenType
 
 logger = logging.getLogger("sqlglot")
 
+from setup_logger import logger as dvm_logger
+
 
 class Generator:
     """
@@ -125,6 +127,7 @@ class Generator:
         "normalize_functions",
         "unsupported_level",
         "unsupported_messages",
+        "warning_messages",
         "null_ordering",
         "max_unsupported",
         "_indent",
@@ -180,6 +183,7 @@ class Generator:
         self.normalize_functions = normalize_functions
         self.unsupported_level = unsupported_level
         self.unsupported_messages = []
+        self.warning_messages = []
         self.max_unsupported = max_unsupported
         self.null_ordering = null_ordering
         self._indent = indent
@@ -199,11 +203,15 @@ class Generator:
         Returns
             the SQL string.
         """
+        self.warning_messages = []
         self.unsupported_messages = []
         sql = self.sql(expression).strip()
 
         if self.unsupported_level == ErrorLevel.IGNORE:
             return sql
+
+        for msg in self.warning_messages:
+            logger.warning(msg)
 
         if self.unsupported_level == ErrorLevel.WARN:
             for msg in self.unsupported_messages:
@@ -217,6 +225,11 @@ class Generator:
         if self.unsupported_level == ErrorLevel.IMMEDIATE:
             raise UnsupportedError(message)
         self.unsupported_messages.append(message)
+
+    def warn(self, e, message: t.Optional[str] = None) -> None:
+        if message:
+            self.warning_messages.append(message)
+        else: self.warning_messages.append(f"Warning: {e.key} may require manual fix. Check DVM README if known. Otherwise add solution.")
 
     def sep(self, sep: str = " ") -> str:
         return f"{sep.strip()}\n" if self.pretty else sep
